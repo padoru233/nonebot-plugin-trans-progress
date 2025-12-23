@@ -13,9 +13,13 @@
 
 </div>
 
+> [!IMPORTANT]
+> **收藏项目**，你的每一个Star⭐都是作者更新的动力～️
+
 ## 📖 介绍
 
-记录和管理漫画汉化组的工作进度
+- 记录和管理漫画汉化组的工作进度
+- ~~AI含量极高~~
 
 ## 💿 安装
 
@@ -104,3 +108,5 @@
 
 ### 🎨 效果图
 如果有效果图的话
+
+[![:name](https://count.getloli.com/@:nonebot-plugin-trans-progress?theme=gelbooru)](https://count.getloli.com/@nonebot-plugin-trans-progress?name=nonebot-plugin-trans-progress&theme=booru-qualityhentais&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)

@@ -1,384 +1,290 @@
-from nonebot import logger, require, get_bot, on_message
-from nonebot.plugin import PluginMetadata, inherit_supported_adapters
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
-from nonebot import logger
+from nonebot import on_command, require, get_driver, logger, get_plugin_config
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
+from nonebot.params import CommandArg
+from tortoise import Tortoise
+from tortoise.queryset import Q
 
-require("nonebot_plugin_alconna")
+require("nonebot_plugin_apscheduler")
 
+from .models import Project, Episode, User
+# 引入 send_group_message
+from .utils import get_default_ddl, send_group_message
+from .web import app as web_app
 from .config import Config
 
-__plugin_meta__ = PluginMetadata(
-    name="汉化进度记录",
-    description="记录和管理漫画汉化组的工作进度",
-    usage="""========命令列表========
-- @    #使用帮助
-- 默认 <项目名> <职位> @成员  # 设置项目默认翻译
-- 添加 <项目名> <话数>  # 添加新的一话
-- 更换 <项目名+话数> <职位> @新成员  # 更换某话staff
-- 添加 <项目名+话数> <职位> @成员  # 添加某话额外staff
-- 完结 <项目名+话数>  # 标记某话完结
-- 查看 <项目名+话数>  # 查看指定话的staff信息
-- 查看 <项目名>  # 查看项目所有话数进度
-- 查看所有项目  # 查看所有项目的默认staff""",
-    type="application",
-    homepage="https://github.com/padoru233/nonebot-plugin-trans-progress",
-    config=Config,
-    supported_adapters=inherit_supported_adapters(
-        "nonebot_plugin_alconna"
-    ),
-)
+driver = get_driver()
+plugin_config = get_plugin_config(Config)
 
-from arclet.alconna import Args, Alconna
-from nonebot_plugin_alconna import on_alconna, At, Match
-from nonebot.matcher import Matcher
-from nonebot.rule import to_me
-from .utils import (
-    create_project,
-    set_default_staff,
-    add_default_staff,
-    add_project_episode,
-    set_staff,
-    add_staff,
-    mark_completed,
-    get_episode_info,
-    get_default_info,
-    get_project_episodes,
-    get_all_projects
-)
+MODELS_PATH = [f"{__name__}.models"]
 
-
-async def get_member_display(bot: Bot, group_id: int, user_id: str) -> str:
-    """获取成员显示名称（昵称+ID）"""
+@driver.on_startup
+async def init_db():
+    db_url = plugin_config.trans_db_url
+    logger.info(f"正在连接数据库 ...")
     try:
-        info = await bot.get_group_member_info(group_id=group_id, user_id=int(user_id))
-        name = info.get("card") or info.get("nickname") or "未知"
-        return f"{name}({user_id})"
-    except Exception as e:
-        logger.warning(f"获取成员信息失败: {e}")
-        return f"未知({user_id})"
-
-
-async def is_group_admin(bot: Bot, event: GroupMessageEvent) -> bool:
-    """检查是否为群主或管理员"""
-    if not isinstance(event, GroupMessageEvent):
-        return False
-
-    try:
-        member_info = await bot.get_group_member_info(
-            group_id=event.group_id,
-            user_id=event.user_id
+        await Tortoise.init(
+            db_url=db_url,
+            modules={"models": MODELS_PATH}
         )
-        role = member_info.get("role", "member")
-        return role in ["owner", "admin"]
+        await Tortoise.generate_schemas(safe=True)
+        logger.info("数据库连接成功！")
     except Exception as e:
-        logger.warning(f"获取成员权限失败: {e}")
-        return False
+        logger.error(f"数据库连接失败: {e}")
+        raise e
+
+@driver.on_shutdown
+async def close_db():
+    logger.info("正在关闭数据库连接...")
+    await Tortoise.close_connections()
+
+@driver.on_startup
+async def init_web():
+    app = driver.server_app
+    app.include_router(web_app, prefix="/trans", tags=["汉化进度管理"])
+
+# ----------------- Bot 指令逻辑 -----------------
+
+# 1. 帮助指令
+cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=True)
+
+@cmd_help.handle()
+async def _():
+    msg = (
+        "🤖 汉化进度管理 Bot 指令\n"
+        "-----------------------------\n"
+        "1. 查看进度:\n"
+        "   查看 (列出所有项目)\n"
+        "   查看 <项目名> (查看该项目详情)\n"
+        "   查看 <项目名> <话数> (查看具体某话)\n\n"
+        "2. 更新进度:\n"
+        "   完成 <项目名> <话数> \n"
+        "   (状态流转: 翻->校->嵌->完，自动At下一位)\n\n"
+        "3. Web后台:\n"
+        "   访问 http://<你的IP>:端口/trans/\n"
+        "   (支持新建项目、分配人员、修改死线)"
+    )
+    # 帮助指令简单回复，直接 finish 即可，或者也改成 send_group_message
+    await cmd_help.finish(msg)
 
 
-# 帮助命令（被at触发）
-help_cmd = on_message(rule=to_me(), priority=10, block=False)
+# 2. 完成指令
+cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=True)
 
-@help_cmd.handle()
-async def _(matcher: Matcher):
-    help_text = """📖 汉化进度记录 - 使用帮助
+@cmd_finish.handle()
+async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    msg = args.extract_plain_text().strip().split()
+    if len(msg) < 2:
+        await cmd_finish.finish("❌ 格式错误，请使用: 完成 <项目名> <话数>")
 
-==========命令列表==========
+    proj_name_or_alias, ep_title = msg[0], msg[1]
+    qq_id = str(event.user_id)
 
-========管理员命令========
+    # 1. 查询项目
+    project = await Project.filter(
+        Q(name=proj_name_or_alias) | Q(alias=proj_name_or_alias)
+    ).prefetch_related('leader').first()
 
-📌 项目默认设置：
-• 默认 <项目名> <职位> @成员
-  示例：默认 魔法少年 翻译 @小明
+    if not project:
+        await cmd_finish.finish(f"❌ 未找到项目: {proj_name_or_alias}")
 
-➕ 添加新话：
-• 添加 <项目名> <话数>
-  示例：添加 魔法少年 18
+    # 2. 查询话数
+    episode = await Episode.get_or_none(project=project, title=ep_title).prefetch_related(
+        'translator', 'proofreader', 'typesetter'
+    )
+    if not episode:
+        await cmd_finish.finish(f"❌ 未找到话数: {ep_title}")
 
-🔄 更换Staff：
-• 更换 <项目名+话数> <职位> @新成员
-  示例：更换 魔法少年18 校对 @小红
+    # 3. 权限检查
+    current_status = episode.status
 
-➕ 添加额外Staff：
-• 添加 <项目名+话数> <职位> @成员
-  示例：添加 魔法少年18 校对 @小刚
+    is_leader = (project.leader and project.leader.qq_id == qq_id)
+    is_group_admin = event.sender.role in ["owner", "admin"]
+    is_assignee = False
 
-✅ 标记完结：
-• 完结 <项目名+话数>
-  示例：完结 魔法少年18
+    stage_name = ""
+    target_user_name = "未分配"
 
-========普通命令========
-
-🔍 查看进度：
-• 查看 <项目名+话数>  # 查看指定话
-• 查看 <项目名>  # 查看项目总览
-• 查看所有项目  # 查看所有项目
-
-💡 职位可选：翻译、校对、嵌字"""
-
-    await matcher.finish(help_text)
-
-
-# 默认设置命令：<项目名> <职位> @成员
-cmd_default_set = on_alconna(
-    Alconna(
-        "默认",
-        Args["project", str]["role", str]["member", At],
-    ),
-    priority=5,
-    block=True,
-    rule=is_group_admin,
-)
-
-@cmd_default_set.handle()
-async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project: str, role: str, member: At):
-    valid_roles = ["翻译", "校对", "嵌字"]
-    if role not in valid_roles:
-        await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
-
-    member_id = str(member.target)
-    set_default_staff(project, role, member_id)
-
-    # 获取成员显示名称
-    member_display = await get_member_display(bot, event.group_id, member_id)
-    await matcher.finish(f"✅ 已设置 {project} 默认{role} 为 {member_display}")
-
-
-# 添加新话数
-cmd_add_episode = on_alconna(
-    Alconna(
-        "添加",
-        Args["project", str]["episode", int],
-    ),
-    priority=5,
-    block=True,
-    rule=is_group_admin,
-)
-
-@cmd_add_episode.handle()
-async def _(matcher: Matcher, project: str, episode: int):
-    add_project_episode(project, episode)
-    await matcher.finish(f"✅ 已添加 {project} 第{episode}话（已复制默认staff）")
-
-
-# 更换某话staff
-cmd_replace_staff = on_alconna(
-    Alconna(
-        "更换",
-        Args["project_episode", str]["role", str]["member", At],
-    ),
-    priority=5,
-    block=True,
-    rule=is_group_admin,
-)
-
-@cmd_replace_staff.handle()
-async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project_episode: str, role: str, member: At):
-    valid_roles = ["翻译", "校对", "嵌字"]
-    if role not in valid_roles:
-        await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
-
-    import re
-    match = re.match(r"^(.+?)(\d+)$", project_episode)
-    if not match:
-        await matcher.finish("格式错误，示例：更换 魔法少年18 校对 @成员")
-
-    project, episode_str = match.groups()
-    episode = int(episode_str)
-
-    member_id = str(member.target)
-    set_staff(project, episode, role, member_id)
-
-    # 获取成员显示名称
-    member_display = await get_member_display(bot, event.group_id, member_id)
-    await matcher.finish(f"✅ 已更换 {project} 第{episode}话 {role} 为 {member_display}")
-
-
-# 添加某话额外staff
-cmd_add_staff = on_alconna(
-    Alconna(
-        "添加",
-        Args["project_episode", str]["role", str]["member", At],
-    ),
-    priority=5,
-    block=True,
-    rule=is_group_admin,
-)
-
-@cmd_add_staff.handle()
-async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project_episode: str, role: str, member: At):
-    valid_roles = ["翻译", "校对", "嵌字"]
-    if role not in valid_roles:
-        await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
-
-    import re
-    match = re.match(r"^(.+?)(\d+)$", project_episode)
-    if not match:
-        await matcher.finish("格式错误，示例：添加 魔法少年18 校对 @成员")
-
-    project, episode_str = match.groups()
-    episode = int(episode_str)
-
-    member_id = str(member.target)
-    add_staff(project, episode, role, member_id)
-
-    # 获取成员显示名称
-    member_display = await get_member_display(bot, event.group_id, member_id)
-    await matcher.finish(f"✅ 已为 {project} 第{episode}话添加 {role}: {member_display}")
-
-
-# 完结命令
-cmd_complete = on_alconna(
-    Alconna(
-        "完结",
-        Args["project_episode", str],
-    ),
-    priority=5,
-    block=True,
-    rule=is_group_admin,
-)
-
-@cmd_complete.handle()
-async def _(matcher: Matcher, project_episode: str):
-    import re
-    match = re.match(r"^(.+?)(\d+)$", project_episode)
-    if not match:
-        await matcher.finish("格式错误，示例：完结 魔法少年18")
-
-    project, episode_str = match.groups()
-    episode = int(episode_str)
-
-    success = mark_completed(project, episode, True)
-    if success:
-        await matcher.finish(f"✅ 已标记 {project} 第{episode}话 为完结")
+    if current_status == 1:
+        stage_name = "翻译"
+        if episode.translator:
+            target_user_name = episode.translator.name
+            if episode.translator.qq_id == qq_id: is_assignee = True
+    elif current_status == 2:
+        stage_name = "校对"
+        if episode.proofreader:
+            target_user_name = episode.proofreader.name
+            if episode.proofreader.qq_id == qq_id: is_assignee = True
+    elif current_status == 3:
+        stage_name = "嵌字"
+        if episode.typesetter:
+            target_user_name = episode.typesetter.name
+            if episode.typesetter.qq_id == qq_id: is_assignee = True
+    elif current_status == 4:
+        await cmd_finish.finish("✅ 该任务已是完结状态")
     else:
-        await matcher.finish(f"❌ {project} 第{episode}话 不存在")
+        await cmd_finish.finish("⚠️ 任务尚未开始，请先在Web端分配人员")
+
+    if not (is_assignee or is_leader or is_group_admin):
+        await cmd_finish.finish(
+            f"⛔ 权限不足！\n"
+            f"当前处于【{stage_name}】阶段，负责人是: {target_user_name}\n"
+            f"仅限本人、项目组长或群管操作。"
+        )
+
+    # 4. 状态流转
+    next_role = ""
+    next_user = None
+
+    if current_status == 1:
+        episode.status = 2
+        if not episode.ddl_proof: episode.ddl_proof = get_default_ddl()
+        next_role = "校对"
+        next_user = episode.proofreader
+    elif current_status == 2:
+        episode.status = 3
+        if not episode.ddl_type: episode.ddl_type = get_default_ddl()
+        next_role = "嵌字"
+        next_user = episode.typesetter
+    elif current_status == 3:
+        episode.status = 4
+        next_role = "发布"
+        next_user = None
+
+    await episode.save()
+
+    # 5. 发送反馈
+    status_text = ['','翻译','校对','嵌字'][current_status]
+
+    reply = Message(f"✅ [{project.name} {ep_title}] {status_text}完成！")
+    if not is_assignee:
+        reply += Message(f" (由 {event.sender.card or event.sender.nickname} 代提交)")
+    reply += Message("\n")
+
+    if episode.status == 4:
+        reply += Message("🎉 全工序完结！")
+        target_qq = None
+        if project.leader:
+            target_qq = project.leader.qq_id
+        else:
+            try:
+                mlist = await bot.get_group_member_list(group_id=int(event.group_id))
+                owner = next((m for m in mlist if m['role'] == 'owner'), None)
+                if owner: target_qq = str(owner['user_id'])
+            except Exception as e:
+                logger.warning(f"获取群主失败: {e}")
+
+        if target_qq:
+            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收发布。")
+        else:
+            reply += Message("\n请管理员查收发布。")
+    else:
+        reply += Message(f"➡️ 进入 [{next_role}] 阶段\n")
+        next_ddl = episode.ddl_proof if episode.status == 2 else episode.ddl_type
+        if next_ddl:
+            reply += Message(f"📅 死线: {next_ddl.strftime('%m-%d')}\n")
+        if next_user:
+            reply += Message("请 ") + MessageSegment.at(next_user.qq_id) + Message(" 接手")
+        else:
+            reply += Message("⚠️ 下一阶段未分配人员！")
+
+    # 使用通用发送函数
+    await send_group_message(int(event.group_id), reply)
+    await cmd_finish.finish()
 
 
-# 查看指定话进度或总项目进度
-cmd_view = on_alconna(
-    Alconna(
-        "查看",
-        Args["project_info", str],
-    ),
-    priority=5,
-    block=True,
-)
+# 3. 查看指令
+cmd_view = on_command("查看", aliases={"查看项目", "view", "进度", "项目列表"}, priority=5, block=True)
 
 @cmd_view.handle()
-async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project_info: str):
-    import re
-    match = re.match(r"^(.+?)(\d+)$", project_info)
+async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    msg = args.extract_plain_text().strip().split()
 
-    # 如果匹配到数字，查看指定话
-    if match:
-        project, episode_str = match.groups()
-        episode = int(episode_str)
+    if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
+        projects = await Project.all().prefetch_related(
+            'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
+        )
+        if not projects:
+            await cmd_view.finish("📭 当前没有任何项目，请去Web端新建。")
 
-        info = get_episode_info(project, episode)
-        if not info:
-            await matcher.finish(f"{project} 第{episode}话 暂无staff信息")
+        reply = "📊 **所有项目一览**\n"
+        for p in projects:
+            reply += f"\n📌 {p.name}"
+            if p.alias: reply += f" ({p.alias})"
 
-        completed = info.get("completed", False)
-        status = "✅ 已完结" if completed else "🔄 进行中"
+            g_name = p.group_name or "未同步群名"
+            reply += f"\n   群: {g_name} ({p.group_id})"
 
-        msg = f"【{project} 第{episode}话】{status}\n"
-        for role in ["翻译", "校对", "嵌字"]:
-            members = info.get(role, [])
-            if members:
-                names = []
-                for m in members:
-                    name = await get_member_display(bot, event.group_id, m)
-                    names.append(name)
-                msg += f"{role}: {', '.join(names)}\n"
+            if p.leader: reply += f" | 👑 {p.leader.name}"
 
-        await matcher.finish(msg.strip())
+            dt = p.default_translator.name if p.default_translator else "-"
+            dp = p.default_proofreader.name if p.default_proofreader else "-"
+            dty = p.default_typesetter.name if p.default_typesetter else "-"
+            if dt != "-" or dp != "-" or dty != "-":
+                reply += f"\n   🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]"
 
-    # 否则查看总项目（包含默认staff和所有话数）
+        await cmd_view.finish(reply.strip())
+
+    target_name = msg[0]
+    target_ep = msg[1] if len(msg) > 1 else None
+
+    project = await Project.filter(
+        Q(name=target_name) | Q(alias=target_name)
+    ).prefetch_related(
+        'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
+    ).first()
+
+    if not project:
+        await cmd_view.finish(f"❌ 未找到项目: {target_name}\n请发送“查看”获取项目列表")
+
+    if target_ep:
+        episode = await Episode.get_or_none(project=project, title=target_ep).prefetch_related(
+            'translator', 'proofreader', 'typesetter'
+        )
+        if not episode:
+            await cmd_view.finish(f"❌ 未找到 {project.name} 的 {target_ep}")
+
+        def fmt_role(user, ddl):
+            u_name = user.name if user else "❌未分配"
+            d_str = ddl.strftime('%m-%d') if ddl else "♾️无死线"
+            return f"{u_name} (📅{d_str})"
+
+        status_map = {0:'⚪未开始', 1:'🔵翻译中', 2:'🟠校对中', 3:'🟢嵌字中', 4:'✅已完结'}
+
+        reply = f"📝 【{project.name} {episode.title}】\n"
+        reply += f"状态: {status_map.get(episode.status)}\n"
+        reply += f"----------------\n"
+        reply += f"翻译: {fmt_role(episode.translator, episode.ddl_trans)}\n"
+        reply += f"校对: {fmt_role(episode.proofreader, episode.ddl_proof)}\n"
+        reply += f"嵌字: {fmt_role(episode.typesetter, episode.ddl_type)}"
+
+        await cmd_view.finish(reply)
+
     else:
-        project = project_info
+        active_eps = await Episode.filter(project=project, status__lt=4).order_by('id').all()
 
-        # 获取默认staff
-        default_info = get_default_info(project)
-        episodes = get_project_episodes(project)
+        reply = f"📊 【{project.name}】"
+        if project.alias: reply += f" ({project.alias})"
+        reply += "\n"
+        if project.leader: reply += f"👑 组长: {project.leader.name}\n"
 
-        if episodes is None and not default_info:
-            await matcher.finish(f"项目 {project} 不存在")
+        dt = project.default_translator.name if project.default_translator else "无"
+        dp = project.default_proofreader.name if project.default_proofreader else "无"
+        dty = project.default_typesetter.name if project.default_typesetter else "无"
+        reply += f"🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]\n"
+        reply += f"----------------\n"
 
-        msg = f"📊 【{project}】项目信息\n\n"
-
-        # 显示默认staff
-        msg += "🎯 默认Staff:\n"
-        has_default = False
-        for role in ["翻译", "校对", "嵌字"]:
-            members = default_info.get(role, [])
-            if members:
-                has_default = True
-                names = []
-                for m in members:
-                    name = await get_member_display(bot, event.group_id, m)
-                    names.append(name)
-                msg += f"  {role}: {', '.join(names)}\n"
-
-        if not has_default:
-            msg += "  暂未设置\n"
-
-        # 显示所有话数进度
-        if not episodes:
-            msg += "\n暂无任何话数"
+        if not active_eps:
+            reply += "🎉 当前无进行中任务 (全部完结或未添加)"
         else:
-            sorted_eps = sorted(episodes.items(), key=lambda x: int(x[0]))
-            msg += f"\n📝 进度列表 (共{len(sorted_eps)}话):\n"
+            reply += f"🔥 进行中 ({len(active_eps)}):\n"
+            for ep in active_eps:
+                s_map = {0:'未', 1:'翻', 2:'校', 3:'嵌'}
+                curr_ddl = None
+                if ep.status == 1: curr_ddl = ep.ddl_trans
+                elif ep.status == 2: curr_ddl = ep.ddl_proof
+                elif ep.status == 3: curr_ddl = ep.ddl_type
 
-            for ep_num, ep_data in sorted_eps:
-                completed = ep_data.get("completed", False)
-                status = "✅" if completed else "🔄"
-                msg += f"{status} 第{ep_num}话"
+                ddl_str = f"|📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
+                reply += f"[{s_map.get(ep.status)}]{ep.title}{ddl_str}\n"
 
-                if completed:
-                    msg += " (已完结)\n"
-                else:
-                    staff_info = []
-                    for role in ["翻译", "校对", "嵌字"]:
-                        members = ep_data.get(role, [])
-                        if members:
-                            names = []
-                            for m in members:
-                                name = await get_member_display(bot, event.group_id, m)
-                                names.append(name)
-                            staff_info.append(f"{role}:{','.join(names)}")
-
-                    if staff_info:
-                        msg += f" ({' | '.join(staff_info)})\n"
-                    else:
-                        msg += " (暂无staff)\n"
-
-        await matcher.finish(msg.strip())
-
-
-# 查看所有项目（只显示默认）
-cmd_view_all = on_alconna(
-    Alconna("查看所有项目"),
-    priority=5,
-    block=True,
-)
-
-@cmd_view_all.handle()
-async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
-    projects = get_all_projects()
-    if not projects:
-        await matcher.finish("暂无任何项目")
-
-    msg = "📊 所有项目默认staff：\n"
-    for proj in projects:
-        info = get_default_info(proj)
-        msg += f"\n【{proj}】\n"
-        for role in ["翻译", "校对", "嵌字"]:
-            members = info.get(role, [])
-            if members:
-                names = []
-                for m in members:
-                    name = await get_member_display(bot, event.group_id, m)
-                    names.append(name)
-                msg += f"  {role}: {', '.join(names)}\n"
-
-    await matcher.finish(msg.strip())
+        await cmd_view.finish(reply.strip())
