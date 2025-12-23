@@ -2,7 +2,7 @@
     <a href="https://v2.nonebot.dev/store">
     <img src="https://raw.githubusercontent.com/fllesser/nonebot-plugin-template/refs/heads/resource/.docs/NoneBotPlugin.svg" width="310" alt="logo"></a>
 
-## ✨ nonebot-plugin-trans-progress ✨
+## ✨ nonebot-plugin-trans-progress 汉化进度记录✨
 [![LICENSE](https://img.shields.io/github/license/padoru233/nonebot-plugin-trans-progress.svg)](./LICENSE)
 [![pypi](https://img.shields.io/pypi/v/nonebot-plugin-trans-progress.svg)](https://pypi.python.org/pypi/nonebot-plugin-trans-progress)
 [![python](https://img.shields.io/badge/python-3.10|3.11|3.12|3.13-blue.svg)](https://www.python.org)
@@ -15,7 +15,7 @@
 
 ## 📖 介绍
 
-这里是插件的详细介绍部分
+记录和管理漫画汉化组的工作进度
 
 ## 💿 安装
 
