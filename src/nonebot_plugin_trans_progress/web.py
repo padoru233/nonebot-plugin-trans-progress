@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from nonebot import get_bot, logger, get_plugin_config
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
-# 本地模块 (确保这些文件都在同级目录下)
+# 本地模块
 from .models import Project, Episode, User
 from .utils import get_default_ddl, send_group_message
 from .config import Config
@@ -18,17 +18,14 @@ plugin_config = get_plugin_config(Config)
 
 # === 鉴权依赖 ===
 async def verify_token(x_auth_token: str = Header(..., alias="X-Auth-Token")):
-    """
-    验证请求头中的密码是否与配置文件一致
-    """
     if x_auth_token != plugin_config.trans_auth_password:
         raise HTTPException(status_code=401, detail="Invalid Password")
     return x_auth_token
 
-# 主路由 (不加锁，用于加载 HTML)
+# 主路由 (不加锁)
 app = APIRouter()
 
-# API 子路由 (加锁，用于数据交互)
+# API 子路由 (加锁)
 api_router = APIRouter(dependencies=[Depends(verify_token)])
 
 # --- Pydantic Models ---
@@ -80,7 +77,7 @@ async def get_db_user(qq, group_id):
     if not qq: return None
     return await User.get_or_none(qq_id=qq, group_id=group_id)
 
-# --- Routes (无需鉴权) ---
+# --- Routes (无鉴权) ---
 
 @app.get("/", response_class=HTMLResponse)
 async def index_page():
@@ -88,34 +85,27 @@ async def index_page():
     with open(os.path.join(os.path.dirname(__file__), "templates", "index.html"), "r", encoding="utf-8") as f:
         return f.read()
 
-# --- Routes (需要鉴权 - 挂载到 api_router) ---
+# --- Routes (有鉴权) ---
 
-# === 获取 Bot 加入的所有群 (用于同步弹窗) ===
 @api_router.get("/groups/all")
 async def get_all_bot_groups():
     try:
         bot = get_bot()
         group_list = await bot.get_group_list()
-        # 返回格式: [{"group_id": "123", "group_name": "某群"}]
         return [{"group_id": str(g['group_id']), "group_name": g['group_name']} for g in group_list]
     except Exception as e:
         logger.error(f"获取Bot群列表失败: {e}")
         return []
 
-# === 获取数据库中已存在的群 (用于新建项目，筛选后的) ===
 @api_router.get("/groups/db")
 async def get_db_groups():
     try:
         bot = get_bot()
         all_groups = await bot.get_group_list()
-
-        # 获取数据库中所有出现过的 group_id
         db_group_ids = set(await User.all().distinct().values_list("group_id", flat=True))
-
         filtered = []
         for g in all_groups:
             gid = str(g['group_id'])
-            # 只有数据库里有人的群才返回
             if gid in db_group_ids:
                 filtered.append({"group_id": gid, "group_name": g['group_name']})
         return filtered
@@ -125,7 +115,6 @@ async def get_db_groups():
 
 @api_router.get("/projects")
 async def get_projects():
-    # 修复 NameError: Project 未定义的问题
     projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter')
     result = []
     for p in projects:
@@ -192,11 +181,9 @@ async def create_project(proj: ProjectCreate):
     gid = proj.group_id
     leader = await get_db_user(proj.leader_qq, gid)
 
-    # 自动录入组长逻辑
     if not leader:
         try:
             bot = get_bot()
-            # 如果指定了leader_qq但数据库没有，尝试获取名字录入
             if proj.leader_qq:
                 try:
                     u_info = await bot.get_group_member_info(group_id=int(gid), user_id=int(proj.leader_qq))
@@ -204,7 +191,6 @@ async def create_project(proj: ProjectCreate):
                     leader, _ = await User.update_or_create(qq_id=proj.leader_qq, group_id=gid, defaults={"name": u_name})
                 except: pass
             else:
-                # 没指定，找群主
                 mlist = await bot.get_group_member_list(group_id=int(gid))
                 owner = next((m for m in mlist if m['role'] == 'owner'), None)
                 if owner:
@@ -222,7 +208,6 @@ async def create_project(proj: ProjectCreate):
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type
     )
 
-    # === 构建多 At 消息 ===
     msg = Message(f"🎉 新坑开张：{proj.name}")
     if proj.alias: msg += Message(f" ({proj.alias})")
     msg += Message("\n")
@@ -268,7 +253,6 @@ async def delete_project(id: int):
 
 @api_router.post("/episode/add")
 async def add_episode(ep: EpisodeCreate):
-    # 修复 NameError: project not defined
     project = await Project.get_or_none(name=ep.project_name)
     if not project: raise HTTPException(404, "项目不存在")
     gid = project.group_id
@@ -283,7 +267,6 @@ async def add_episode(ep: EpisodeCreate):
         ddl_trans=ep.ddl_trans, ddl_proof=ep.ddl_proof, ddl_type=ep.ddl_type
     )
 
-    # 构建消息
     msg = Message(f"📢 新任务：{project.name} {ep.title}\n")
     if trans:
         msg += Message("请 ") + MessageSegment.at(trans.qq_id) + Message(" 接翻译")
@@ -294,54 +277,106 @@ async def add_episode(ep: EpisodeCreate):
     await send_group_message(int(gid), msg)
     return {"status": "created"}
 
+# === 核心逻辑：编辑进度 + 智能播报 ===
 @api_router.put("/episode/{id}")
 async def update_episode(id: int, form: EpisodeUpdate):
-    # 修复 prefetch 写法
-    ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter')
+    # 1. 预加载所有相关对象
+    ep = await Episode.get_or_none(id=id).prefetch_related(
+        'project', 'project__leader', 'translator', 'proofreader', 'typesetter'
+    )
     if not ep: raise HTTPException(404)
     gid = int(ep.project.group_id)
 
-    old_status = ep.status
+    # 2. 准备新的人员对象 (为了对比)
+    new_trans = await get_db_user(form.translator_qq, str(gid))
+    new_proof = await get_db_user(form.proofreader_qq, str(gid))
+    new_type = await get_db_user(form.typesetter_qq, str(gid))
+
+    # 3. 记录变更点
+    changes: List[str] = []
+    at_qq_set: Set[str] = set() # 待At的人员集合
+
+    # 辅助对比函数
+    def check_field_change(label, old_val, new_val):
+        if old_val != new_val:
+            changes.append(f"{label}: {old_val} -> {new_val}")
+            return True
+        return False
+
+    def fmt_date(d):
+        return d.strftime('%m-%d') if d else "无"
+
+    def fmt_user_name(u):
+        return u.name if u else "未分配"
+
+    # --- 对比人员 ---
+    if (ep.translator and ep.translator.id) != (new_trans and new_trans.id):
+        changes.append(f"翻译: {fmt_user_name(ep.translator)} -> {fmt_user_name(new_trans)}")
+        if new_trans: at_qq_set.add(new_trans.qq_id)
+
+    if (ep.proofreader and ep.proofreader.id) != (new_proof and new_proof.id):
+        changes.append(f"校对: {fmt_user_name(ep.proofreader)} -> {fmt_user_name(new_proof)}")
+        if new_proof: at_qq_set.add(new_proof.qq_id)
+
+    if (ep.typesetter and ep.typesetter.id) != (new_type and new_type.id):
+        changes.append(f"嵌字: {fmt_user_name(ep.typesetter)} -> {fmt_user_name(new_type)}")
+        if new_type: at_qq_set.add(new_type.qq_id)
+
+    # --- 对比日期 (如果日期变了，At当前负责人) ---
+    # 这里的逻辑是：如果该工序日期变了，且该工序有人，就At他
+    if fmt_date(ep.ddl_trans) != fmt_date(form.ddl_trans):
+        changes.append(f"翻译DDL: {fmt_date(ep.ddl_trans)} -> {fmt_date(form.ddl_trans)}")
+        # 优先At新负责人，如果没有变动则At旧负责人
+        target = new_trans if new_trans else ep.translator
+        if target: at_qq_set.add(target.qq_id)
+
+    if fmt_date(ep.ddl_proof) != fmt_date(form.ddl_proof):
+        changes.append(f"校对DDL: {fmt_date(ep.ddl_proof)} -> {fmt_date(form.ddl_proof)}")
+        target = new_proof if new_proof else ep.proofreader
+        if target: at_qq_set.add(target.qq_id)
+
+    if fmt_date(ep.ddl_type) != fmt_date(form.ddl_type):
+        changes.append(f"嵌字DDL: {fmt_date(ep.ddl_type)} -> {fmt_date(form.ddl_type)}")
+        target = new_type if new_type else ep.typesetter
+        if target: at_qq_set.add(target.qq_id)
+
+    # --- 对比状态 (状态流转 At 下一棒) ---
+    status_map = ['未开始','翻译','校对','嵌字','完结']
+    if ep.status != form.status:
+        changes.append(f"状态: {status_map[ep.status]} -> {status_map[form.status]}")
+        # 根据新状态 At 相应人员
+        if form.status == 1 and new_trans: at_qq_set.add(new_trans.qq_id)
+        elif form.status == 2 and new_proof: at_qq_set.add(new_proof.qq_id)
+        elif form.status == 3 and new_type: at_qq_set.add(new_type.qq_id)
+        elif form.status == 4:
+            # 完结 At 组长
+            if ep.project.leader: at_qq_set.add(ep.project.leader.qq_id)
+
+    # 4. 执行数据库更新
     ep.title = form.title
     ep.status = form.status
-
-    ep.translator = await get_db_user(form.translator_qq, str(gid))
-    ep.proofreader = await get_db_user(form.proofreader_qq, str(gid))
-    ep.typesetter = await get_db_user(form.typesetter_qq, str(gid))
-
+    ep.translator = new_trans
+    ep.proofreader = new_proof
+    ep.typesetter = new_type
     ep.ddl_trans = form.ddl_trans
     ep.ddl_proof = form.ddl_proof
     ep.ddl_type = form.ddl_type
 
     await ep.save()
 
-    # 状态更新播报
-    if form.status != old_status:
-        status_str = ['未','翻','校','嵌','完']
-        msg = Message(f"🔄 [{ep.project.name} {ep.title}] 进度更新：{status_str[old_status]}->{status_str[form.status]}\n")
+    # 5. 发送播报 (如果有变动)
+    if changes:
+        msg = Message(f"📝 [{ep.project.name} {ep.title}] 信息更新：\n")
+        # 添加变更列表
+        for idx, change in enumerate(changes, 1):
+            msg += Message(f"{idx}. {change}\n")
 
-        target_qq = None
-        tip = ""
-        ddl = None
-
-        if form.status == 2: # 翻->校
-            target_qq = ep.proofreader.qq_id if ep.proofreader else None
-            tip = "请接校对"
-            ddl = ep.ddl_proof
-        elif form.status == 3: # 校->嵌
-            target_qq = ep.typesetter.qq_id if ep.typesetter else None
-            tip = "请接嵌字"
-            ddl = ep.ddl_type
-        elif form.status == 4: # 嵌->完
-            if ep.project.leader: target_qq = ep.project.leader.qq_id
-            tip = "全流程完结，请查收"
-
-        if target_qq:
-            msg += Message("请 ") + MessageSegment.at(target_qq) + Message(f" {tip}")
-            if ddl: msg += Message(f" (死线: {ddl.strftime('%m-%d')})")
-        else:
-            if form.status < 4: msg += Message("⚠️ 下一阶段未分配人员")
-            else: msg += Message("🎉 全流程完结！")
+        # 添加 At 列表
+        if at_qq_set:
+            msg += Message("请 ")
+            for qq in at_qq_set:
+                msg += MessageSegment.at(qq) + Message(" ")
+            msg += Message("留意变动")
 
         await send_group_message(gid, msg)
 
@@ -364,7 +399,6 @@ async def update_member(id: int, form: MemberUpdate):
 async def delete_member(id: int):
     u = await User.get_or_none(id=id)
     if not u: raise HTTPException(404)
-    # 解除关联
     await Episode.filter(translator=u).update(translator_id=None)
     await Episode.filter(proofreader=u).update(proofreader_id=None)
     await Episode.filter(typesetter=u).update(typesetter_id=None)
@@ -375,5 +409,4 @@ async def delete_member(id: int):
     await u.delete()
     return {"status": "success"}
 
-# 挂载鉴权路由
 app.include_router(api_router)

@@ -128,7 +128,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         await cmd_finish.finish(
             f"⛔ 权限不足！\n"
             f"当前处于【{stage_name}】阶段，负责人是: {target_user_name}\n"
-            f"仅限本人、项目组长或群管操作。"
+            f"仅限本人、项目组长或群管操作"
         )
 
     # 4. 状态流转
@@ -174,9 +174,9 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
                 logger.warning(f"获取群主失败: {e}")
 
         if target_qq:
-            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收发布。")
+            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收发布")
         else:
-            reply += Message("\n请管理员查收发布。")
+            reply += Message("\n请管理员查收发布")
     else:
         reply += Message(f"➡️ 进入 [{next_role}] 阶段\n")
         next_ddl = episode.ddl_proof if episode.status == 2 else episode.ddl_type
@@ -204,7 +204,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
         )
         if not projects:
-            await cmd_view.finish("📭 当前没有任何项目，请去Web端新建。")
+            await cmd_view.finish("📭 当前没有任何项目，请去Web端新建")
 
         reply = "📊 **所有项目一览**\n"
         for p in projects:
