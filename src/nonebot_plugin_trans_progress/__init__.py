@@ -1,6 +1,7 @@
 from nonebot import logger, require, get_bot, on_message
 from nonebot.plugin import PluginMetadata, inherit_supported_adapters
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
+from nonebot import logger
 
 require("nonebot_plugin_alconna")
 
@@ -10,6 +11,7 @@ __plugin_meta__ = PluginMetadata(
     name="汉化进度记录",
     description="记录和管理漫画汉化组的工作进度",
     usage="""========命令列表========
+- @    #使用帮助
 - 默认 <项目名> <职位> @成员  # 设置项目默认翻译
 - 添加 <项目名> <话数>  # 添加新的一话
 - 更换 <项目名+话数> <职位> @新成员  # 更换某话staff
@@ -56,6 +58,23 @@ async def get_member_display(bot: Bot, group_id: int, user_id: str) -> str:
         return f"未知({user_id})"
 
 
+async def is_group_admin(bot: Bot, event: GroupMessageEvent) -> bool:
+    """检查是否为群主或管理员"""
+    if not isinstance(event, GroupMessageEvent):
+        return False
+
+    try:
+        member_info = await bot.get_group_member_info(
+            group_id=event.group_id,
+            user_id=event.user_id
+        )
+        role = member_info.get("role", "member")
+        return role in ["owner", "admin"]
+    except Exception as e:
+        logger.warning(f"获取成员权限失败: {e}")
+        return False
+
+
 # 帮助命令（被at触发）
 help_cmd = on_message(rule=to_me(), priority=10, block=False)
 
@@ -63,7 +82,9 @@ help_cmd = on_message(rule=to_me(), priority=10, block=False)
 async def _(matcher: Matcher):
     help_text = """📖 汉化进度记录 - 使用帮助
 
-========命令列表========
+==========命令列表==========
+
+========管理员命令========
 
 📌 项目默认设置：
 • 默认 <项目名> <职位> @成员
@@ -85,6 +106,8 @@ async def _(matcher: Matcher):
 • 完结 <项目名+话数>
   示例：完结 魔法少年18
 
+========普通命令========
+
 🔍 查看进度：
 • 查看 <项目名+话数>  # 查看指定话
 • 查看 <项目名>  # 查看项目总览
@@ -103,10 +126,11 @@ cmd_default_set = on_alconna(
     ),
     priority=5,
     block=True,
+    rule=is_group_admin,
 )
 
 @cmd_default_set.handle()
-async def _(matcher: Matcher, project: str, role: str, member: At):
+async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project: str, role: str, member: At):
     valid_roles = ["翻译", "校对", "嵌字"]
     if role not in valid_roles:
         await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
@@ -114,7 +138,9 @@ async def _(matcher: Matcher, project: str, role: str, member: At):
     member_id = str(member.target)
     set_default_staff(project, role, member_id)
 
-    await matcher.finish(f"✅ 已设置 {project} 默认{role} 为 {member}")
+    # 获取成员显示名称
+    member_display = await get_member_display(bot, event.group_id, member_id)
+    await matcher.finish(f"✅ 已设置 {project} 默认{role} 为 {member_display}")
 
 
 # 添加新话数
@@ -125,6 +151,7 @@ cmd_add_episode = on_alconna(
     ),
     priority=5,
     block=True,
+    rule=is_group_admin,
 )
 
 @cmd_add_episode.handle()
@@ -141,10 +168,11 @@ cmd_replace_staff = on_alconna(
     ),
     priority=5,
     block=True,
+    rule=is_group_admin,
 )
 
 @cmd_replace_staff.handle()
-async def _(matcher: Matcher, project_episode: str, role: str, member: At):
+async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project_episode: str, role: str, member: At):
     valid_roles = ["翻译", "校对", "嵌字"]
     if role not in valid_roles:
         await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
@@ -160,7 +188,9 @@ async def _(matcher: Matcher, project_episode: str, role: str, member: At):
     member_id = str(member.target)
     set_staff(project, episode, role, member_id)
 
-    await matcher.finish(f"✅ 已更换 {project} 第{episode}话 {role} 为 {member}")
+    # 获取成员显示名称
+    member_display = await get_member_display(bot, event.group_id, member_id)
+    await matcher.finish(f"✅ 已更换 {project} 第{episode}话 {role} 为 {member_display}")
 
 
 # 添加某话额外staff
@@ -171,10 +201,11 @@ cmd_add_staff = on_alconna(
     ),
     priority=5,
     block=True,
+    rule=is_group_admin,
 )
 
 @cmd_add_staff.handle()
-async def _(matcher: Matcher, project_episode: str, role: str, member: At):
+async def _(bot: Bot, event: GroupMessageEvent, matcher: Matcher, project_episode: str, role: str, member: At):
     valid_roles = ["翻译", "校对", "嵌字"]
     if role not in valid_roles:
         await matcher.finish(f"无效的职位，可选：{', '.join(valid_roles)}")
@@ -190,7 +221,9 @@ async def _(matcher: Matcher, project_episode: str, role: str, member: At):
     member_id = str(member.target)
     add_staff(project, episode, role, member_id)
 
-    await matcher.finish(f"✅ 已为 {project} 第{episode}话添加 {role}: {member}")
+    # 获取成员显示名称
+    member_display = await get_member_display(bot, event.group_id, member_id)
+    await matcher.finish(f"✅ 已为 {project} 第{episode}话添加 {role}: {member_display}")
 
 
 # 完结命令
@@ -201,6 +234,7 @@ cmd_complete = on_alconna(
     ),
     priority=5,
     block=True,
+    rule=is_group_admin,
 )
 
 @cmd_complete.handle()
