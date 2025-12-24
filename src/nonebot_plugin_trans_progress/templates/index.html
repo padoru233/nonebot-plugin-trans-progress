@@ -14,7 +14,8 @@
         .header { background: #fff; padding: 0 15px; height: 60px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 100; }
         .header .title { font-size: 20px; font-weight: 700; display: flex; align-items: center; }
 
-        .main-container { padding: 15px; max-width: 1000px; margin: 0 auto; }
+        /* 容器宽度优化：加宽以适应设置表格 */
+        .main-container { padding: 15px; max-width: 1400px; width: 95%; margin: 0 auto; }
 
         /* 卡片与折叠面板 */
         .el-collapse-item__header { font-size: 16px; font-weight: bold; height: auto; padding: 10px 0; }
@@ -29,6 +30,9 @@
         .stage-box .user { flex-grow: 1; font-weight: 500; }
         .stage-box .date { font-family: monospace; color: #909399; font-size: 13px; }
         .stage-box .date.overdue { color: #f56c6c; font-weight: bold; }
+
+        /* 任务标签样式 */
+        .task-tag { margin-right: 5px; margin-bottom: 5px; display: inline-block; }
 
         /* 移动端适配 */
         @media (max-width: 768px) {
@@ -83,8 +87,11 @@
                                     <div class="project-header">
                                         <div class="project-info">
                                             <span>{{ p.name }}</span>
-                                            <el-tag v-if="p.alias" size="small" type="info">{{ p.alias }}</el-tag>
-                                            <el-tag size="small" effect="plain">{{ p.group_name || p.group_id }}</el-tag>
+                                            <el-tag v-for="alias in p.aliases" :key="alias" size="small" type="info" style="margin-right:4px">{{ alias }}</el-tag>
+
+                                            <el-tag size="small" effect="plain">
+                                                {{ (p.group_name && p.group_name !== '未同步') ? (p.group_name + ' (' + p.group_id + ')') : p.group_id }}
+                                            </el-tag>
                                         </div>
                                         <div @click.stop style="margin-right: 10px;">
                                             <el-button size="small" icon="Edit" circle @click="openEditProject(p)"></el-button>
@@ -100,7 +107,14 @@
                                         <el-table-column prop="title" label="话数" width="70"></el-table-column>
                                         <el-table-column label="状态" width="75" align="center">
                                             <template #default="{row}">
-                                                <el-tag :class="'status-tag-'+row.status" effect="light" size="small">{{ ['未','翻','校','嵌','完'][row.status] || row.status }}</el-tag>
+                                                <el-tag
+                                                    :key="row.id + '-' + row.status"
+                                                    :class="'status-tag-'+row.status"
+                                                    effect="light"
+                                                    size="small"
+                                                >
+                                                    {{ ['未','翻','校','嵌','完'][row.status] || row.status }}
+                                                </el-tag>
                                             </template>
                                         </el-table-column>
                                         <el-table-column label="进度详情">
@@ -131,6 +145,77 @@
                                 </div>
                             </el-collapse-item>
                         </el-collapse>
+                    </el-tab-pane>
+
+                    <el-tab-pane label="播报设置" name="settings">
+                        <el-alert title="仅显示已同步成员的群组。设置每日自动播报时间（默认10:00），或手动点击一键催更。" type="info" show-icon style="margin-bottom: 15px;"></el-alert>
+
+                        <el-table :data="settingsList" border style="width: 100%" v-loading="loading" stripe>
+                            <el-table-column prop="group_name" label="群名称" width="180">
+                                <template #default="{row}">
+                                    <div style="font-weight: bold;">{{ row.group_name }}</div>
+                                    <div style="font-size: 12px; color: #909399;">{{ row.group_id }}</div>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column label="播报开关" width="100" align="center">
+                                <template #default="{row}">
+                                    <el-switch
+                                        v-model="row.enable_broadcast"
+                                        @change="val => handleSettingChange(row)"
+                                        active-color="#13ce66"
+                                        inactive-color="#ff4949">
+                                    </el-switch>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column label="播报时间" width="160" align="center">
+                                <template #default="{row}">
+                                    <el-time-select
+                                        v-model="row.broadcast_time"
+                                        start="00:00"
+                                        step="00:30"
+                                        end="23:30"
+                                        placeholder="选择时间"
+                                        :clearable="false"
+                                        @change="val => handleSettingChange(row)"
+                                        style="width: 120px"
+                                        :disabled="!row.enable_broadcast"
+                                    >
+                                    </el-time-select>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column label="操作" width="120" align="center">
+                                <template #default="{row}">
+                                    <el-button
+                                        type="primary"
+                                        size="small"
+                                        icon="Bell"
+                                        plain
+                                        @click="handleRemindNow(row)"
+                                    >一键催更</el-button>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column label="当前进行中任务 (工序: 负责人)">
+                                <template #default="{row}">
+                                    <div v-if="row.tasks.length === 0" style="color: #c0c4cc; font-size: 13px;">无进行中任务</div>
+                                    <div v-else>
+                                        <el-tag
+                                            v-for="(t, index) in row.tasks"
+                                            :key="t.project_name + t.title + t.status"
+                                            class="task-tag"
+                                            effect="light"
+                                            :type="t.status === 1 ? '' : (t.status === 2 ? 'warning' : 'success')"
+                                        >
+                                            <b>[{{ t.project_name }} {{ t.title }}]</b>
+                                            {{ t.stage }}: {{ t.user }}
+                                        </el-tag>
+                                    </div>
+                                </template>
+                            </el-table-column>
+                        </el-table>
                     </el-tab-pane>
 
                     <el-tab-pane label="成员管理" name="members">
@@ -169,7 +254,21 @@
             <el-dialog v-model="dialogs.project" :title="forms.project.id ? '编辑项目' : '新建项目'" width="500px">
                 <el-form :model="forms.project" label-width="70px" size="large">
                     <el-form-item label="名称"><el-input v-model="forms.project.name" placeholder="项目名称"></el-input></el-form-item>
-                    <el-form-item label="别名"><el-input v-model="forms.project.alias" placeholder="Bot指令简称"></el-input></el-form-item>
+
+                    <el-form-item label="别名">
+                        <el-select
+                            v-model="forms.project.aliases"
+                            multiple
+                            filterable
+                            allow-create
+                            default-first-option
+                            :reserve-keyword="false"
+                            placeholder="输入别名后回车"
+                            style="width: 100%"
+                        >
+                        </el-select>
+                        <div style="font-size: 12px; color: #909399; line-height: 1.2;">输入内容后按 Enter 键生成标签，可添加多个。</div>
+                    </el-form-item>
 
                     <el-form-item label="绑定群" v-if="!forms.project.id">
                         <el-select v-model="forms.project.group_id" placeholder="选择已同步成员的群" filterable style="width: 100%">
@@ -270,15 +369,26 @@
 
                 const projects = ref([]);
                 const members = ref([]);
-                // 分离两个群组列表：All(所有) 和 DB(已存在)
                 const botGroupsAll = ref([]);
                 const botGroupsDB = ref([]);
+                const settingsList = ref([]); // 设置列表
 
                 const activeTab = ref('projects');
                 const activeCollapse = ref([]);
                 const dialogs = reactive({ login: false, project: false, episode: false, sync: false, member: false });
+
+                // 表单数据
                 const forms = reactive({
-                    project: { id: null, name: '', alias: '', group_id: '', leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '' },
+                    project: {
+                        id: null,
+                        name: '',
+                        aliases: [], // 初始化为数组
+                        group_id: '',
+                        leader_qq: '',
+                        default_translator_qq: '',
+                        default_proofreader_qq: '',
+                        default_typesetter_qq: ''
+                    },
                     episode: { id: null, project_name: '', title: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null },
                     sync_group: '',
                     member: { id: null, name: '' }
@@ -322,23 +432,24 @@
                 const fetchData = async () => {
                     loading.value = true;
                     try {
-                        const [p, m, gAll, gDB] = await Promise.all([
+                        const [p, m, gAll, gDB, sList] = await Promise.all([
                             axios.get(`${API}/projects`),
                             axios.get(`${API}/members`),
-                            axios.get(`${API}/groups/all`), // 获取所有Bot群
-                            axios.get(`${API}/groups/db`)   // 获取DB中的群
+                            axios.get(`${API}/groups/all`),
+                            axios.get(`${API}/groups/db`),
+                            axios.get(`${API}/settings/list`)
                         ]);
                         projects.value = p.data;
                         members.value = m.data;
                         botGroupsAll.value = gAll.data;
                         botGroupsDB.value = gDB.data;
+                        settingsList.value = sList.data; // 绑定设置数据
                     } catch (e) { console.error(e); }
                     finally { loading.value = false; }
                 };
 
                 // === Helpers ===
                 const getGroupName = (gid) => {
-                    // 优先从 All 列表里找，找不到就显示 '未同步'
                     const group = botGroupsAll.value.find(g => g.group_id === gid);
                     return group ? group.group_name : '未同步';
                 };
@@ -350,20 +461,25 @@
 
                 // === Actions ===
                 const openCreateProject = () => {
-                    forms.project = {id:null, name:'', alias:'', group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: ''};
+                    forms.project = {
+                        id:null, name:'', aliases: [], // 必须为空数组
+                        group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: ''
+                    };
                     dialogs.project = true;
                 };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
                     forms.project = {
-                        id:p.id, name:p.name, alias:p.alias, group_id:p.group_id, leader_qq: p.leader?.qq_id || '',
+                        id:p.id, name:p.name,
+                        aliases: p.aliases || [], // 转为数组
+                        group_id:p.group_id, leader_qq: p.leader?.qq_id || '',
                         default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type
                     };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
                     const pl = {...forms.project};
-                    Object.keys(pl).forEach(k => { if(!pl[k] && k!='id') delete pl[k] });
+                    Object.keys(pl).forEach(k => { if(!pl[k] && k!='id' && k!='aliases') delete pl[k] });
                     try {
                         if(pl.id) await axios.put(`${API}/project/${pl.id}`, pl);
                         else await axios.post(`${API}/project/create`, pl);
@@ -410,6 +526,31 @@
                 const submitMember = async() => { await axios.put(`${API}/member/${forms.member.id}`, {name:forms.member.name}); dialogs.member=false; fetchData(); };
                 const handleDelMember = async(r) => { if(confirm('删?')) { await axios.delete(`${API}/member/${r.id}`); fetchData(); }};
 
+                // 核心：处理设置更新 (同时提交时间)
+                const handleSettingChange = async (row) => {
+                    try {
+                        await axios.post(`${API}/settings/update`, {
+                            group_id: row.group_id,
+                            enable: row.enable_broadcast,
+                            time: row.broadcast_time
+                        });
+                        ElementPlus.ElMessage.success('设置已保存');
+                    } catch(e) {
+                        ElementPlus.ElMessage.error('保存失败');
+                    }
+                };
+
+                // 核心：一键催更
+                const handleRemindNow = async (row) => {
+                    if(!confirm(`确定要立即向【${row.group_name}】发送催更播报吗？`)) return;
+                    try {
+                        await axios.post(`${API}/settings/remind_now`, { group_id: row.group_id });
+                        ElementPlus.ElMessage.success('指令已发送');
+                    } catch(e) {
+                        ElementPlus.ElMessage.error('发送失败');
+                    }
+                };
+
                 // === Computed ===
                 const computedProjectMembersForEdit = computed(() => {
                     const gid = forms.project.id ? currentEditingProjectGroupId.value : forms.project.group_id;
@@ -426,11 +567,12 @@
 
                 return {
                     loading, authorized, authPassword, handleLogin, logout,
-                    activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB,
+                    activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB, settingsList,
                     dialogs, forms, stages,
                     openCreateProject, openEditProject, submitProject, handleDelProject,
                     openAddEpisode, openEditEpisode, submitEpisode,
                     submitSync, openEditMember, submitMember, handleDelMember,
+                    handleSettingChange, handleRemindNow, // 导出新函数
                     computedProjectMembersForEdit, currentProjectMembers, uniqueGroups, filteredMembers,
                     memberSearch, filterGroup, getGroupName,
                     fmtDate, isOver

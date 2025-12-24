@@ -3,9 +3,9 @@ from pydantic import BaseModel
 
 
 class Config(BaseModel):
-    # 数据库链接 (必填)
-    trans_db_url: str = "mysql://root:password@127.0.0.1:3306/trans_db"
-    # Web访问密码 (默认为 admin，建议修改)
+    # 数据库链接格式: postgres://用户名:密码@地址:端口/数据库名
+    trans_db_url: str = "postgres://postgres:password@127.0.0.1:5432/trans_db"
+    # Web访问密码
     trans_auth_password: str = "admin"
 
 

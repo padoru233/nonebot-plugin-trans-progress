@@ -42,6 +42,58 @@ async def init_web():
     app = driver.server_app
     app.include_router(web_app, prefix="/trans", tags=["汉化进度管理"])
 
+# === 辅助函数：智能查找项目 ===
+async def find_project(keyword: str) -> Project | None:
+    # 1. 尝试名字精确匹配
+    p = await Project.get_or_none(name=keyword).prefetch_related('leader')
+    if p: return p
+
+    # 2. 尝试别名匹配 (混合逻辑)
+    # 先尝试数据库层面的数组包含 (精确匹配别名中的某一个)
+    try:
+        p = await Project.filter(aliases__contains=[keyword]).prefetch_related('leader').first()
+        if p: return p
+    except:
+        pass # 忽略 JSON 格式错误
+
+    # 3. 兜底：内存遍历 (支持模糊匹配，比如别名"MyGo"，搜"Go"也能找到)
+    # 因为项目通常不会成千上万，内存遍历非常快且不易报错
+    all_projs = await Project.all().prefetch_related('leader')
+    for proj in all_projs:
+        # 确保 aliases 是列表
+        aliases = proj.aliases if isinstance(proj.aliases, list) else []
+        for alias in aliases:
+            if keyword in alias: # 只要包含这个字就算
+                return proj
+
+    return None
+
+# === 辅助函数：智能查找话数 ===
+async def find_episode(project: Project, keyword: str) -> Episode | None:
+    """
+    查找话数：
+    1. 精确匹配 title
+    2. 模糊匹配 title (contains)
+    """
+    # 1. 精确
+    ep = await Episode.get_or_none(project=project, title=keyword).prefetch_related('translator', 'proofreader', 'typesetter')
+    if ep: return ep
+
+    # 2. 模糊 (包含)
+    # 例如 DB存的是 "第12话", 用户搜 "12" -> 匹配成功
+    # 可能会匹配到多个 (如搜 "1"，匹配到 "第1话", "第11话")，这里简单起见取第一个，或者可以做更复杂的数字提取
+    eps = await Episode.filter(project=project, title__contains=keyword).prefetch_related('translator', 'proofreader', 'typesetter').all()
+
+    if len(eps) == 1:
+        return eps[0]
+    elif len(eps) > 1:
+        # 如果搜 "1" 匹配到 "1话" 和 "12话"，尝试通过正则提取数字对比，这里先简单返回第一个，或者抛出歧义
+        # 简单优化：优先返回最短的匹配 (通常 "1" 对应 "1" 而不是 "11")
+        eps.sort(key=lambda x: len(x.title))
+        return eps[0]
+
+    return None
+
 # ----------------- Bot 指令逻辑 -----------------
 
 # 1. 帮助指令
@@ -74,25 +126,20 @@ cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=
 async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = args.extract_plain_text().strip().split()
     if len(msg) < 2:
-        await cmd_finish.finish("❌ 格式错误，请使用: 完成 <项目名> <话数>")
+        await cmd_finish.finish("❌ 格式错误，请使用: 完成 <项目名/别名> <话数>")
 
-    proj_name_or_alias, ep_title = msg[0], msg[1]
+    proj_input, ep_input = msg[0], msg[1]
     qq_id = str(event.user_id)
 
-    # 1. 查询项目
-    project = await Project.filter(
-        Q(name=proj_name_or_alias) | Q(alias=proj_name_or_alias)
-    ).prefetch_related('leader').first()
-
+    # 1. 智能查找项目
+    project = await find_project(proj_input)
     if not project:
-        await cmd_finish.finish(f"❌ 未找到项目: {proj_name_or_alias}")
+        await cmd_finish.finish(f"❌ 未找到项目: {proj_input}")
 
-    # 2. 查询话数
-    episode = await Episode.get_or_none(project=project, title=ep_title).prefetch_related(
-        'translator', 'proofreader', 'typesetter'
-    )
+    # 2. 智能查找话数
+    episode = await find_episode(project, ep_input)
     if not episode:
-        await cmd_finish.finish(f"❌ 未找到话数: {ep_title}")
+        await cmd_finish.finish(f"❌ 未找到话数: {ep_input} (项目: {project.name})")
 
     # 3. 权限检查
     current_status = episode.status
@@ -155,7 +202,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     # 5. 发送反馈
     status_text = ['','翻译','校对','嵌字'][current_status]
 
-    reply = Message(f"✅ [{project.name} {ep_title}] {status_text}完成！")
+    reply = Message(f"✅ [{project.name} {episode.title}] {status_text}完成！")
     if not is_assignee:
         reply += Message(f" (由 {event.sender.card or event.sender.nickname} 代提交)")
     reply += Message("\n")
@@ -209,7 +256,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         reply = "📊 **所有项目一览**\n"
         for p in projects:
             reply += f"\n📌 {p.name}"
-            if p.alias: reply += f" ({p.alias})"
+            if p.aliases: reply += f" (别名: {','.join(p.aliases)})"
 
             g_name = p.group_name or "未同步群名"
             reply += f"\n   群: {g_name} ({p.group_id})"
@@ -227,19 +274,15 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     target_name = msg[0]
     target_ep = msg[1] if len(msg) > 1 else None
 
-    project = await Project.filter(
-        Q(name=target_name) | Q(alias=target_name)
-    ).prefetch_related(
-        'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
-    ).first()
+    # 1. 智能查找项目
+    project = await find_project(target_name)
 
     if not project:
-        await cmd_view.finish(f"❌ 未找到项目: {target_name}\n请发送“查看”获取项目列表")
+        await cmd_view.finish(f"❌ 未找到项目: {target_name}\n请发送“查看项目”或“项目列表”获取信息")
 
     if target_ep:
-        episode = await Episode.get_or_none(project=project, title=target_ep).prefetch_related(
-            'translator', 'proofreader', 'typesetter'
-        )
+        # 2. 智能查找话数
+        episode = await find_episode(project, target_ep)
         if not episode:
             await cmd_view.finish(f"❌ 未找到 {project.name} 的 {target_ep}")
 

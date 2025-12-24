@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Set
+from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -9,9 +10,10 @@ from nonebot import get_bot, logger, get_plugin_config
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
 # 本地模块
-from .models import Project, Episode, User
+from .models import Project, Episode, User, GroupSetting
 from .utils import get_default_ddl, send_group_message
 from .config import Config
+from .broadcast import check_and_send_broadcast
 
 # 加载配置
 plugin_config = get_plugin_config(Config)
@@ -31,7 +33,7 @@ api_router = APIRouter(dependencies=[Depends(verify_token)])
 # --- Pydantic Models ---
 class ProjectCreate(BaseModel):
     name: str
-    alias: Optional[str] = None
+    aliases: List[str] = [] # 支持多别名
     group_id: str
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
@@ -40,7 +42,7 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     name: str
-    alias: Optional[str] = None
+    aliases: List[str] = [] # 支持多别名
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -70,6 +72,14 @@ class MemberUpdate(BaseModel):
     name: str
 
 class SyncGroupModel(BaseModel):
+    group_id: str
+
+class SettingUpdate(BaseModel):
+    group_id: str
+    enable: bool
+    time: str = "10:00"
+
+class RemindNow(BaseModel):
     group_id: str
 
 # --- Helpers ---
@@ -116,8 +126,21 @@ async def get_db_groups():
 @api_router.get("/projects")
 async def get_projects():
     projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter')
+
+    # 获取Bot群名缓存
+    bot_groups_map = {}
+    try:
+        from nonebot import get_bot
+        bot = get_bot()
+        g_list = await bot.get_group_list()
+        for g in g_list:
+            bot_groups_map[str(g['group_id'])] = g['group_name']
+    except:
+        pass
+
     result = []
     for p in projects:
+        # 获取话数详情
         eps = await Episode.filter(project=p).prefetch_related('translator', 'proofreader', 'typesetter').order_by('id').all()
         ep_list = []
         for e in eps:
@@ -135,8 +158,15 @@ async def get_projects():
             "type": p.default_typesetter.qq_id if p.default_typesetter else "",
         }
 
+        # === 核心修复点：在这里定义 real_group_name ===
+        real_group_name = bot_groups_map.get(p.group_id) or p.group_name or "未同步"
+
         result.append({
-            "id": p.id, "name": p.name, "alias": p.alias, "group_id": p.group_id, "group_name": p.group_name,
+            "id": p.id,
+            "name": p.name,
+            "aliases": p.aliases,
+            "group_id": p.group_id,
+            "group_name": real_group_name, # 这里就不再报错了
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
             "defaults": defaults,
             "episodes": ep_list
@@ -154,12 +184,14 @@ async def sync_group_members(data: SyncGroupModel):
         gid = int(data.group_id)
         g_info = await bot.get_group_info(group_id=gid)
         g_name = g_info.get("group_name", "未知群聊")
+        # 更新Project表里的群名缓存
         await Project.filter(group_id=data.group_id).update(group_name=g_name)
         member_list = await bot.get_group_member_list(group_id=gid)
     except Exception as e:
         raise HTTPException(500, f"Bot通讯失败: {e}")
 
     count = 0
+    # 这里也可以优化为 bulk_create，但为了逻辑清晰先保持 update_or_create
     for m in member_list:
         qq = str(m['user_id'])
         name = m['card'] or m['nickname'] or f"用户{qq}"
@@ -181,6 +213,7 @@ async def create_project(proj: ProjectCreate):
     gid = proj.group_id
     leader = await get_db_user(proj.leader_qq, gid)
 
+    # 尝试自动创建负责人User（如果DB里没有）
     if not leader:
         try:
             bot = get_bot()
@@ -204,12 +237,14 @@ async def create_project(proj: ProjectCreate):
     d_type = await get_db_user(proj.default_typesetter_qq, gid)
 
     await Project.create(
-        name=proj.name, alias=proj.alias, group_id=gid, group_name=g_name, leader=leader,
+        name=proj.name,
+        aliases=proj.aliases,
+        group_id=gid, group_name=g_name, leader=leader,
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type
     )
 
     msg = Message(f"🎉 新坑开张：{proj.name}")
-    if proj.alias: msg += Message(f" ({proj.alias})")
+    if proj.aliases: msg += Message(f" (别名: {', '.join(proj.aliases)})")
     msg += Message("\n")
 
     targets = []
@@ -223,7 +258,6 @@ async def create_project(proj: ProjectCreate):
         if user.qq_id not in seen_qq:
             msg += Message(f"{role}: ") + MessageSegment.at(user.qq_id) + Message(" ")
             seen_qq.add(user.qq_id)
-
     msg += Message("\n大家加油！")
 
     await send_group_message(int(gid), msg)
@@ -235,7 +269,7 @@ async def update_project(id: int, form: ProjectUpdate):
     if not p: raise HTTPException(404)
     gid = p.group_id
     p.name = form.name
-    p.alias = form.alias
+    p.aliases = form.aliases
     p.leader = await get_db_user(form.leader_qq, gid)
     p.default_translator = await get_db_user(form.default_translator_qq, gid)
     p.default_proofreader = await get_db_user(form.default_proofreader_qq, gid)
@@ -277,31 +311,20 @@ async def add_episode(ep: EpisodeCreate):
     await send_group_message(int(gid), msg)
     return {"status": "created"}
 
-# === 核心逻辑：编辑进度 + 智能播报 ===
 @api_router.put("/episode/{id}")
 async def update_episode(id: int, form: EpisodeUpdate):
-    # 1. 预加载所有相关对象
     ep = await Episode.get_or_none(id=id).prefetch_related(
         'project', 'project__leader', 'translator', 'proofreader', 'typesetter'
     )
     if not ep: raise HTTPException(404)
     gid = int(ep.project.group_id)
 
-    # 2. 准备新的人员对象 (为了对比)
     new_trans = await get_db_user(form.translator_qq, str(gid))
     new_proof = await get_db_user(form.proofreader_qq, str(gid))
     new_type = await get_db_user(form.typesetter_qq, str(gid))
 
-    # 3. 记录变更点
     changes: List[str] = []
-    at_qq_set: Set[str] = set() # 待At的人员集合
-
-    # 辅助对比函数
-    def check_field_change(label, old_val, new_val):
-        if old_val != new_val:
-            changes.append(f"{label}: {old_val} -> {new_val}")
-            return True
-        return False
+    at_qq_set: Set[str] = set()
 
     def fmt_date(d):
         return d.strftime('%m-%d') if d else "无"
@@ -309,7 +332,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
     def fmt_user_name(u):
         return u.name if u else "未分配"
 
-    # --- 对比人员 ---
+    # 对比人员
     if (ep.translator and ep.translator.id) != (new_trans and new_trans.id):
         changes.append(f"翻译: {fmt_user_name(ep.translator)} -> {fmt_user_name(new_trans)}")
         if new_trans: at_qq_set.add(new_trans.qq_id)
@@ -322,11 +345,9 @@ async def update_episode(id: int, form: EpisodeUpdate):
         changes.append(f"嵌字: {fmt_user_name(ep.typesetter)} -> {fmt_user_name(new_type)}")
         if new_type: at_qq_set.add(new_type.qq_id)
 
-    # --- 对比日期 (如果日期变了，At当前负责人) ---
-    # 这里的逻辑是：如果该工序日期变了，且该工序有人，就At他
+    # 对比日期
     if fmt_date(ep.ddl_trans) != fmt_date(form.ddl_trans):
         changes.append(f"翻译DDL: {fmt_date(ep.ddl_trans)} -> {fmt_date(form.ddl_trans)}")
-        # 优先At新负责人，如果没有变动则At旧负责人
         target = new_trans if new_trans else ep.translator
         if target: at_qq_set.add(target.qq_id)
 
@@ -340,19 +361,16 @@ async def update_episode(id: int, form: EpisodeUpdate):
         target = new_type if new_type else ep.typesetter
         if target: at_qq_set.add(target.qq_id)
 
-    # --- 对比状态 (状态流转 At 下一棒) ---
+    # 对比状态
     status_map = ['未开始','翻译','校对','嵌字','完结']
     if ep.status != form.status:
         changes.append(f"状态: {status_map[ep.status]} -> {status_map[form.status]}")
-        # 根据新状态 At 相应人员
         if form.status == 1 and new_trans: at_qq_set.add(new_trans.qq_id)
         elif form.status == 2 and new_proof: at_qq_set.add(new_proof.qq_id)
         elif form.status == 3 and new_type: at_qq_set.add(new_type.qq_id)
         elif form.status == 4:
-            # 完结 At 组长
             if ep.project.leader: at_qq_set.add(ep.project.leader.qq_id)
 
-    # 4. 执行数据库更新
     ep.title = form.title
     ep.status = form.status
     ep.translator = new_trans
@@ -364,20 +382,15 @@ async def update_episode(id: int, form: EpisodeUpdate):
 
     await ep.save()
 
-    # 5. 发送播报 (如果有变动)
     if changes:
         msg = Message(f"📝 [{ep.project.name} {ep.title}] 信息更新：\n")
-        # 添加变更列表
         for idx, change in enumerate(changes, 1):
             msg += Message(f"{idx}. {change}\n")
-
-        # 添加 At 列表
         if at_qq_set:
             msg += Message("请 ")
             for qq in at_qq_set:
                 msg += MessageSegment.at(qq) + Message(" ")
             msg += Message("留意变动")
-
         await send_group_message(gid, msg)
 
     return {"status": "success"}
@@ -407,6 +420,94 @@ async def delete_member(id: int):
     await Project.filter(default_proofreader=u).update(default_proofreader_id=None)
     await Project.filter(default_typesetter=u).update(default_typesetter_id=None)
     await u.delete()
+    return {"status": "success"}
+
+# === 核心：设置相关接口 ===
+
+@api_router.get("/settings/list")
+async def get_settings_list():
+    # 1. 获取已同步成员的群ID
+    synced_group_ids = await User.all().distinct().values_list("group_id", flat=True)
+    synced_group_ids = [str(gid) for gid in synced_group_ids]
+
+    if not synced_group_ids:
+        return []
+
+    # 2. 获取群名缓存
+    group_name_map = {}
+    try:
+        bot = get_bot()
+        group_list = await bot.get_group_list()
+        for g in group_list:
+            group_name_map[str(g['group_id'])] = g['group_name']
+    except:
+        projects = await Project.filter(group_id__in=synced_group_ids).all()
+        for p in projects:
+            if p.group_name: group_name_map[p.group_id] = p.group_name
+
+    # 3. 获取配置
+    settings_db = await GroupSetting.filter(group_id__in=synced_group_ids).all()
+    settings_map = {s.group_id: s for s in settings_db}
+
+    # 4. 获取未完成任务
+    active_eps = await Episode.filter(
+        status__in=[1, 2, 3],
+        project__group_id__in=synced_group_ids
+    ).prefetch_related('project', 'translator', 'proofreader', 'typesetter')
+
+    tasks_map = defaultdict(list)
+    for ep in active_eps:
+        gid = ep.project.group_id
+        stage_text = ""
+        user_name = "未分配"
+
+        if ep.status == 1:
+            stage_text = "翻译"
+            if ep.translator: user_name = ep.translator.name
+        elif ep.status == 2:
+            stage_text = "校对"
+            if ep.proofreader: user_name = ep.proofreader.name
+        elif ep.status == 3:
+            stage_text = "嵌字"
+            if ep.typesetter: user_name = ep.typesetter.name
+
+        tasks_map[gid].append({
+            "project_name": ep.project.name,
+            "title": ep.title,
+            "stage": stage_text,
+            "user": user_name,
+            "status": ep.status
+        })
+
+    # 5. 组装结果
+    result = []
+    for gid in synced_group_ids:
+        setting = settings_map.get(gid)
+        result.append({
+            "group_id": gid,
+            "group_name": group_name_map.get(gid, f"群{gid}"),
+            "enable_broadcast": setting.enable_broadcast if setting else True,
+            "broadcast_time": setting.broadcast_time if setting else "10:00",
+            "tasks": tasks_map.get(gid, [])
+        })
+
+    result.sort(key=lambda x: x['group_id'])
+    return result
+
+@api_router.post("/settings/update")
+async def update_setting(form: SettingUpdate):
+    await GroupSetting.update_or_create(
+        group_id=form.group_id,
+        defaults={
+            "enable_broadcast": form.enable,
+            "broadcast_time": form.time
+        }
+    )
+    return {"status": "success"}
+
+@api_router.post("/settings/remind_now")
+async def remind_now(form: RemindNow):
+    await check_and_send_broadcast(form.group_id, is_manual=True)
     return {"status": "success"}
 
 app.include_router(api_router)

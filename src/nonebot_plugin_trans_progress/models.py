@@ -13,13 +13,16 @@ class User(models.Model):
 class Project(models.Model):
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=100, unique=True)
-    alias = fields.CharField(max_length=50, null=True) # 新增：别名
+
+    # === 修改处: 使用 JSONField 存储多个别名 ===
+    # 格式示例: ["别名1", "简写2"]
+    aliases = fields.JSONField(default=list)
+
     group_id = fields.CharField(max_length=20)
     group_name = fields.CharField(max_length=100, null=True)
 
     leader = fields.ForeignKeyField('models.User', related_name='led_projects', null=True)
 
-    # 新增：默认人员配置
     default_translator = fields.ForeignKeyField('models.User', related_name='def_trans_projects', null=True)
     default_proofreader = fields.ForeignKeyField('models.User', related_name='def_proof_projects', null=True)
     default_typesetter = fields.ForeignKeyField('models.User', related_name='def_type_projects', null=True)
@@ -46,3 +49,11 @@ class Episode(models.Model):
     class Meta:
         table = "trans_episodes"
         unique_together = (("project", "title"),)
+
+class GroupSetting(models.Model):
+    group_id = fields.CharField(max_length=20, pk=True)
+    enable_broadcast = fields.BooleanField(default=True) # 默认开启播报
+    broadcast_time = fields.CharField(max_length=20, default="10:00") # 新增：播报时间，格式如 "10:00"
+
+    class Meta:
+        table = "trans_group_settings"
