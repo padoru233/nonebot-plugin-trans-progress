@@ -273,7 +273,6 @@ async def delete_project(id: int):
     await p.delete()
     return {"status": "success"}
 
-# Episode Add/Update/Delete 保持原样 (省略以节省篇幅，逻辑不变)
 @api_router.post("/episode/add")
 async def add_episode(ep: EpisodeCreate):
     project = await Project.get_or_none(name=ep.project_name)
@@ -294,11 +293,56 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter')
     if not ep: raise HTTPException(404)
     gid = int(ep.project.group_id)
+
+    # 1. 解析新的 User 对象
     new_trans = await get_db_user(form.translator_qq, str(gid))
     new_proof = await get_db_user(form.proofreader_qq, str(gid))
     new_type = await get_db_user(form.typesetter_qq, str(gid))
 
-    # ... (变更通知逻辑保持不变) ...
+    # 2. 对比差异，生成通知
+    changes = []
+    mentions_qq = set()
+
+    def fmt_date(d): return d.strftime('%m-%d') if d else "未定"
+    def fmt_user(u): return u.name if u else "未分配"
+
+    # 检查标题
+    if ep.title != form.title:
+        changes.append(f"标题: {ep.title} -> {form.title}")
+
+    # 检查状态
+    status_map = {0: '未开始', 1: '翻译', 2: '校对', 3: '嵌字', 4: '完结'}
+    if ep.status != form.status:
+        old_s = status_map.get(ep.status, str(ep.status))
+        new_s = status_map.get(form.status, str(form.status))
+        changes.append(f"状态: {old_s} -> {new_s}")
+        # 状态变更，提醒新阶段负责人
+        if form.status == 1 and new_trans: mentions_qq.add(new_trans.qq_id)
+        elif form.status == 2 and new_proof: mentions_qq.add(new_proof.qq_id)
+        elif form.status == 3 and new_type: mentions_qq.add(new_type.qq_id)
+
+    # 辅助函数：检查具体工序的人员和DDL变动
+    def check_role_change(label, old_u, new_u, old_ddl, new_ddl):
+        # 检查人员变更
+        old_uid = old_u.id if old_u else None
+        new_uid = new_u.id if new_u else None
+        if old_uid != new_uid:
+            changes.append(f"{label}: {fmt_user(old_u)} -> {fmt_user(new_u)}")
+            if new_u: mentions_qq.add(new_u.qq_id)
+
+        # 检查 DDL 变更
+        # 注意：此处直接对比 datetime/None，若存在时区差异(naive vs aware)可能误判，但在 diff 文本中会体现
+        if old_ddl != new_ddl:
+            changes.append(f"{label}DDL: {fmt_date(old_ddl)} -> {fmt_date(new_ddl)}")
+            # DDL 变动，提醒当前负责人 (新负责人 > 旧负责人)
+            target = new_u if new_u else old_u
+            if target: mentions_qq.add(target.qq_id)
+
+    check_role_change("翻译", ep.translator, new_trans, ep.ddl_trans, form.ddl_trans)
+    check_role_change("校对", ep.proofreader, new_proof, ep.ddl_proof, form.ddl_proof)
+    check_role_change("嵌字", ep.typesetter, new_type, ep.ddl_type, form.ddl_type)
+
+    # 3. 更新数据
     ep.title = form.title
     ep.status = form.status
     ep.translator = new_trans
@@ -308,6 +352,21 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.ddl_proof = form.ddl_proof
     ep.ddl_type = form.ddl_type
     await ep.save()
+
+    # 4. 发送通知 (如果有变动)
+    if changes:
+        msg = Message(f"📝 [{ep.project.name} {ep.title}] 信息更新：\n")
+        for idx, c in enumerate(changes, 1):
+            msg += Message(f"{idx}. {c}\n")
+
+        if mentions_qq:
+            msg += Message("请 ")
+            for qid in mentions_qq:
+                msg += MessageSegment.at(qid) + Message(" ")
+            msg += Message("留意变动")
+
+        await send_group_message(gid, msg)
+
     return {"status": "success"}
 
 @api_router.delete("/episode/{id}")
