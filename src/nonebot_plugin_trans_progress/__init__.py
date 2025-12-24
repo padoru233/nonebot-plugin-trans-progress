@@ -4,14 +4,12 @@ from nonebot.params import CommandArg
 from tortoise import Tortoise
 from tortoise.queryset import Q
 
-require("nonebot_plugin_apscheduler")
-from nonebot_plugin_apscheduler import scheduler
-
 from .models import Project, Episode, User
 # 引入 send_group_message
 from .utils import get_default_ddl, send_group_message
 from .web import app as web_app
 from .config import Config
+from . import scheduler
 
 driver = get_driver()
 plugin_config = get_plugin_config(Config)
