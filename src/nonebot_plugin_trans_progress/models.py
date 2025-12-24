@@ -5,6 +5,8 @@ class User(models.Model):
     qq_id = fields.CharField(max_length=20)
     group_id = fields.CharField(max_length=20)
     name = fields.CharField(max_length=100)
+    # 新增：成员标签
+    tags = fields.JSONField(default=list)
 
     class Meta:
         table = "trans_users"
@@ -13,10 +15,9 @@ class User(models.Model):
 class Project(models.Model):
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=100, unique=True)
-
-    # === 修改处: 使用 JSONField 存储多个别名 ===
-    # 格式示例: ["别名1", "简写2"]
     aliases = fields.JSONField(default=list)
+    # 新增：项目标签
+    tags = fields.JSONField(default=list)
 
     group_id = fields.CharField(max_length=20)
     group_name = fields.CharField(max_length=100, null=True)
