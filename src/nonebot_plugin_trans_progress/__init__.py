@@ -5,6 +5,7 @@ from tortoise import Tortoise
 from tortoise.queryset import Q
 
 require("nonebot_plugin_apscheduler")
+from nonebot_plugin_apscheduler import scheduler
 
 from .models import Project, Episode, User
 # 引入 send_group_message
