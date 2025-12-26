@@ -46,9 +46,9 @@ async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
         prefix = ""
         if ddl_date < today_date:
             days = (today_date - ddl_date).days
-            prefix = f"❌ [超期{days}天]"
+            prefix = f"💢 [拖了{days}天啦]"
         elif ddl_date == today_date:
-            prefix = "⚠️ [今天截止]"
+            prefix = "🔥 [就在今天!]"
 
         # === 核心逻辑：不去重 At ===
         line = Message(f"{prefix} [{ep.project.name} {ep.title}] ({stage_name}) ")
@@ -56,21 +56,21 @@ async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
         if target_user:
             line += MessageSegment.at(target_user.qq_id)
         else:
-            line += Message("人员未分配")
+            line += Message("👻 (还没人认领)")
 
         line += Message("\n")
         msg_list.append(line)
 
     # 发送逻辑
     if msg_list:
-        title = "🔔 催更提醒" if is_manual else f"📅 每日死线播报 ({now.strftime('%m-%d')})"
+        title = "🔔 这种事情不可以忘记哦" if is_manual else f"📅 早安！来看看今天的死线战士 ({now.strftime('%m-%d')})"
         final_message = Message(f"{title}：\n")
         for m in msg_list:
             final_message += m
 
-        final_message += Message("\n加油！")
+        final_message += Message("\n大家的肝还好吗？做不完的话记得在群里喊一声哦~ 💪")
         await send_group_message(int(group_id), final_message)
 
     elif is_manual:
         # 手动触发，但没有超期任务
-        await send_group_message(int(group_id), Message("🔍 当前没有超期或今日截止的任务"))
+        await send_group_message(int(group_id), Message("☕ 居然没有要催的任务？大家休息一下吧~"))

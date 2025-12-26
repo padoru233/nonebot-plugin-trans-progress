@@ -231,7 +231,7 @@ async def create_project(proj: ProjectCreate):
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type
     )
 
-    msg = Message(f"🎉 新坑开张：{proj.name}")
+    msg = Message(f"🔨 挖到新坑啦！新坑开张：{proj.name}")
     if proj.aliases: msg += Message(f" (别名: {', '.join(proj.aliases)})")
     if proj.tags: msg += Message(f"\n🏷️ 标签: {', '.join(proj.tags)}")
     msg += Message("\n")
@@ -245,7 +245,7 @@ async def create_project(proj: ProjectCreate):
         if user.qq_id not in seen_qq:
             msg += Message(f"{role}: ") + MessageSegment.at(user.qq_id) + Message(" ")
             seen_qq.add(user.qq_id)
-    msg += Message("\n大家加油！")
+    msg += Message("\n✨ 大家加油！")
 
     await send_group_message(int(gid), msg)
     return {"status": "success"}
@@ -282,9 +282,9 @@ async def add_episode(ep: EpisodeCreate):
     proof = await get_db_user(ep.proofreader_qq, gid)
     type_ = await get_db_user(ep.typesetter_qq, gid)
     await Episode.create(project=project, title=ep.title, status=1, translator=trans, proofreader=proof, typesetter=type_, ddl_trans=ep.ddl_trans, ddl_proof=ep.ddl_proof, ddl_type=ep.ddl_type)
-    msg = Message(f"📢 新任务：{project.name} {ep.title}\n")
-    if trans: msg += Message("请 ") + MessageSegment.at(trans.qq_id) + Message(" 接翻译")
-    else: msg += Message("⚠️ 翻译未分配")
+    msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
+    if trans: msg += Message("翻译就决定是你了！") + MessageSegment.at(trans.qq_id) + Message(" 冲鸭！")
+    else: msg += Message("✍️ 翻译未分锅")
     await send_group_message(int(gid), msg)
     return {"status": "created"}
 
@@ -355,15 +355,14 @@ async def update_episode(id: int, form: EpisodeUpdate):
 
     # 4. 发送通知 (如果有变动)
     if changes:
-        msg = Message(f"📝 [{ep.project.name} {ep.title}] 信息更新：\n")
+        msg = Message(f"📢 注意！[{ep.project.name} {ep.title}] 情报有变：\n")
         for idx, c in enumerate(changes, 1):
             msg += Message(f"{idx}. {c}\n")
 
         if mentions_qq:
-            msg += Message("请 ")
             for qid in mentions_qq:
                 msg += MessageSegment.at(qid) + Message(" ")
-            msg += Message("留意变动")
+            msg += Message("上面被点到的同学，请确认一下新的安排哦~ 👀")
 
         await send_group_message(gid, msg)
 

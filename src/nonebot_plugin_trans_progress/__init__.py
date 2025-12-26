@@ -101,18 +101,19 @@ cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=Tr
 @cmd_help.handle()
 async def _():
     msg = (
-        "🤖 汉化进度管理 Bot 指令\n"
-        "-----------------------------\n"
-        "1. 查看进度:\n"
-        "   查看 (列出所有项目)\n"
-        "   查看 <项目名> (查看该项目详情)\n"
-        "   查看 <项目名> <话数> (查看具体某话)\n\n"
-        "2. 更新进度:\n"
-        "   完成 <项目名> <话数> \n"
-        "   (状态流转: 翻->校->嵌->完，自动At下一位)\n\n"
-        "3. Web后台:\n"
-        "   访问 http://<你的IP>:端口/trans/\n"
-        "   (支持新建项目、分配人员、修改死线)"
+        "✨ 汉化组小助手在这里捏！\n"
+        "========================\n"
+        "🧐 想看进度?\n"
+        "   • 查看 / 列表 -> 看看手里有多少坑\n"
+        "   • 查看 <项目> -> 盯着某个坑看\n"
+        "   • 查看 <项目> <话数> -> 查查某话动没动\n\n"
+        "📝 做完啦?\n"
+        "   • 完成 <项目> <话数> -> 交稿！(会自动艾特下一个人哦)\n\n"
+        "💻 后台管理\n"
+        "   • 戳这里: http://<你的IP>:端口/trans/\n"
+        "   (开新坑、分锅、定死线都在这里哒)\n"
+        "========================\n"
+        "大家辛苦啦，要注意休息哦"
     )
     # 帮助指令简单回复，直接 finish 即可，或者也改成 send_group_message
     await cmd_help.finish(msg)
@@ -125,7 +126,7 @@ cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=
 async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = args.extract_plain_text().strip().split()
     if len(msg) < 2:
-        await cmd_finish.finish("❌ 格式错误，请使用: 完成 <项目名/别名> <话数>")
+        await cmd_finish.finish("唔…指令格式不对哦？😵‍💫\n试试这样：完成 <项目名> <话数>")
 
     proj_input, ep_input = msg[0], msg[1]
     qq_id = str(event.user_id)
@@ -133,12 +134,12 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     # 1. 智能查找项目
     project = await find_project(proj_input)
     if not project:
-        await cmd_finish.finish(f"❌ 未找到项目: {proj_input}")
+        await cmd_finish.finish(f"找不到叫「{proj_input}」的项目捏… 是不是名字打错啦？👀")
 
     # 2. 智能查找话数
     episode = await find_episode(project, ep_input)
     if not episode:
-        await cmd_finish.finish(f"❌ 未找到话数: {ep_input} (项目: {project.name})")
+        await cmd_finish.finish(f"找不到话数「{ep_input}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
 
     # 3. 权限检查
     current_status = episode.status
@@ -166,15 +167,15 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             target_user_name = episode.typesetter.name
             if episode.typesetter.qq_id == qq_id: is_assignee = True
     elif current_status == 4:
-        await cmd_finish.finish("✅ 该任务已是完结状态")
+        await cmd_finish.finish("✅ 这个任务已经是完结状态啦")
     else:
-        await cmd_finish.finish("⚠️ 任务尚未开始，请先在Web端分配人员")
+        await cmd_finish.finish("⚠️ 这个任务还没在后台分配人员呢，先去Web端把锅分好再说吧！")
 
     if not (is_assignee or is_leader or is_group_admin):
         await cmd_finish.finish(
-            f"⛔ 权限不足！\n"
-            f"当前处于【{stage_name}】阶段，负责人是: {target_user_name}\n"
-            f"仅限本人、项目组长或群管操作"
+            f"🙅‍♀️ 达咩！不可以操作！\n"
+            f"当前是【{stage_name}】阶段，负责人是: {target_user_name}\n"
+            f"只有本人、组长或者管理员才能交稿哦~"
         )
 
     # 4. 状态流转
@@ -201,13 +202,13 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     # 5. 发送反馈
     status_text = ['','翻译','校对','嵌字'][current_status]
 
-    reply = Message(f"✅ [{project.name} {episode.title}] {status_text}完成！")
+    reply = Message(f"🎉 辛苦啦！[{project.name} {episode.title}] {status_text}搞定！✨")
     if not is_assignee:
         reply += Message(f" (由 {event.sender.card or event.sender.nickname} 代提交)")
     reply += Message("\n")
 
     if episode.status == 4:
-        reply += Message("🎉 全工序完结！")
+        reply += Message("🎆 撒花！全工序完结！")
         target_qq = None
         if project.leader:
             target_qq = project.leader.qq_id
@@ -220,7 +221,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
                 logger.warning(f"获取群主失败: {e}")
 
         if target_qq:
-            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收发布")
+            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收，准备发布啦~ 🚀")
         else:
             reply += Message("\n请管理员查收发布")
     else:
@@ -229,9 +230,9 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         if next_ddl:
             reply += Message(f"📅 死线: {next_ddl.strftime('%m-%d')}\n")
         if next_user:
-            reply += Message("请 ") + MessageSegment.at(next_user.qq_id) + Message(" 接手")
+            reply += Message("接力棒交给你啦！") + MessageSegment.at(next_user.qq_id) + Message("拜托了捏~ 🙏")
         else:
-            reply += Message("⚠️ 下一阶段未分配人员！")
+            reply += Message("⚠️ 哎呀，下一棒还没人接手！组长快来分锅！🍲")
 
     # 使用通用发送函数
     await send_group_message(int(event.group_id), reply)
@@ -250,9 +251,9 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
         )
         if not projects:
-            await cmd_view.finish("📭 当前没有任何项目，请去Web端新建")
+            await cmd_view.finish("📭 现在的坑都填完啦？或者是还没开坑？(空空如也)")
 
-        reply = "📊 **所有项目一览**\n"
+        reply = "📂 **汉化组当前项目一览**"
         for p in projects:
             reply += f"\n📌 {p.name}"
             if p.aliases: reply += f" (别名: {','.join(p.aliases)})"
@@ -277,20 +278,20 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     project = await find_project(target_name)
 
     if not project:
-        await cmd_view.finish(f"❌ 未找到项目: {target_name}\n请发送“查看项目”或“项目列表”获取信息")
+        await cmd_view.finish(f"找不到叫「{target_name}」的项目捏… 是不是名字打错啦？👀")
 
     if target_ep:
         # 2. 智能查找话数
         episode = await find_episode(project, target_ep)
         if not episode:
-            await cmd_view.finish(f"❌ 未找到 {project.name} 的 {target_ep}")
+            await cmd_view.finish(f"找不到话数「{target_ep}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
 
         def fmt_role(user, ddl):
             u_name = user.name if user else "❌未分配"
             d_str = ddl.strftime('%m-%d') if ddl else "♾️无死线"
             return f"{u_name} (📅{d_str})"
 
-        status_map = {0:'⚪未开始', 1:'🔵翻译中', 2:'🟠校对中', 3:'🟢嵌字中', 4:'✅已完结'}
+        status_map = {0:'💤躺平中', 1:'✍️翻译中', 2:'🔍校对中', 3:'🎨嵌字中', 4:'🏆已完结'}
 
         reply = f"📝 【{project.name} {episode.title}】\n"
         reply += f"状态: {status_map.get(episode.status)}\n"
@@ -316,7 +317,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         reply += f"----------------\n"
 
         if not active_eps:
-            reply += "🎉 当前无进行中任务 (全部完结或未添加)"
+            reply += "🎉 现在的坑都填完啦？或者是还没开坑？(空空如也)"
         else:
             reply += f"🔥 进行中 ({len(active_eps)}):\n"
             for ep in active_eps:
