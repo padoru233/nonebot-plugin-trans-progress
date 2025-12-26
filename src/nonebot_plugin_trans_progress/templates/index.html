@@ -206,7 +206,9 @@
                         <el-select v-model="forms.project.aliases" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="回车添加" style="width: 100%"></el-select>
                     </el-form-item>
                     <el-form-item label="标签">
-                        <el-select v-model="forms.project.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="回车添加" style="width: 100%"></el-select>
+                        <el-select v-model="forms.project.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="回车添加或选择现有" style="width: 100%">
+                            <el-option v-for="tag in allProjectTags" :key="tag" :label="tag" :value="tag"></el-option>
+                        </el-select>
                     </el-form-item>
                     <el-form-item label="绑定群" v-if="!forms.project.id">
                         <el-select v-model="forms.project.group_id" placeholder="选择已同步成员的群" filterable style="width: 100%">
@@ -251,7 +253,9 @@
                 <el-form size="large">
                     <el-form-item label="昵称"><el-input v-model="forms.member.name"></el-input></el-form-item>
                     <el-form-item label="标签">
-                        <el-select v-model="forms.member.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="输入标签回车" style="width: 100%"></el-select>
+                        <el-select v-model="forms.member.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="输入标签回车或选择" style="width: 100%">
+                            <el-option v-for="tag in allMemberTags" :key="tag" :label="tag" :value="tag"></el-option>
+                        </el-select>
                     </el-form-item>
                 </el-form>
                 <template #footer><el-button type="primary" size="large" @click="submitMember" style="width: 100%">保存</el-button></template>
@@ -367,6 +371,13 @@
                     return Array.from(s);
                 });
 
+                // 新增：计算所有成员的已有标签
+                const allMemberTags = computed(() => {
+                    const s = new Set();
+                    members.value.forEach(m => { if(m.tags) m.tags.forEach(t => s.add(t)) });
+                    return Array.from(s);
+                });
+
                 // 新增：筛选人员下拉列表 (支持搜 Tags)
                 const filterMemberMethod = (query) => { memberKeyword.value = query; };
                 const memberOptions = computed(() => {
@@ -418,7 +429,7 @@
                     submitSync, openEditMember, submitMember, handleDelMember,
                     handleSettingChange, handleRemindNow,
                     computedProjectMembersForEdit, currentProjectMembers,
-                    filteredProjects, filteredMembers, allProjectTags, memberOptions, filterMemberMethod,
+                    filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver
                 };
              }
