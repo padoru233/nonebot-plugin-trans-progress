@@ -253,7 +253,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         if not projects:
             await cmd_view.finish("📭 现在的坑都填完啦？或者是还没开坑？(空空如也)")
 
-        reply = "📂 **汉化组当前项目一览**"
+        reply = "📂   汉化组当前项目一览"
         for p in projects:
             reply += f"\n📌 {p.name}"
             if p.aliases: reply += f" (别名: {','.join(p.aliases)})"
@@ -267,7 +267,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             dp = p.default_proofreader.name if p.default_proofreader else "-"
             dty = p.default_typesetter.name if p.default_typesetter else "-"
             if dt != "-" or dp != "-" or dty != "-":
-                reply += f"\n   🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]"
+                reply += f"\n   📦 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]"
 
         await cmd_view.finish(reply.strip())
 
