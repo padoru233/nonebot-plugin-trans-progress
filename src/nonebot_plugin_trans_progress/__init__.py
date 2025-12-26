@@ -1,6 +1,7 @@
 from nonebot import on_command, require, get_driver, logger, get_plugin_config
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.params import CommandArg
+from nonebot.plugin import PluginMetadata
 from tortoise import Tortoise
 from tortoise.queryset import Q
 
@@ -15,6 +16,21 @@ driver = get_driver()
 plugin_config = get_plugin_config(Config)
 
 MODELS_PATH = [f"{__name__}.models"]
+
+
+usage = """@Bot+帮助"""
+
+# 插件元数据
+__plugin_meta__ = PluginMetadata(
+    name="汉化进度记录",
+    description="记录和管理漫画汉化组的工作进度",
+    usage=usage,
+    type="application",
+    homepage="https://github.com/padoru233/nonebot-plugin-trans-progress",
+    config=Config,
+    supported_adapters={"~onebot.v11"},
+)
+
 
 @driver.on_startup
 async def init_db():
