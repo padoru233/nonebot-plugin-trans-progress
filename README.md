@@ -100,6 +100,7 @@
 | TRANS_DB_URL |  是   |   无   | 见下 |
 | TRANS_AUTH_PASSWORD |  是   |   admin   | Web访问密码 |
 - 数据库链接格式: `postgres://用户名:密码@地址:端口/数据库名` 例如：`postgres://postgres:password@127.0.0.1:5432/trans_db`
+- 使用驱动器 `DRIVER=~fastapi`或者`DRIVER=~quart`
 
 ## 🎉 使用
 ### 指令表
