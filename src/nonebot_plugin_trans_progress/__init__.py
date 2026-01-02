@@ -66,7 +66,7 @@ async def init_web():
     sub_app = FastAPI(
         title="汉化进度管理",
         description="NoneBot Plugin Trans Progress API",
-        version="0.3.10",
+        version="0.3.9",
         docs_url="/docs",
         openapi_url="/openapi.json"
     )
