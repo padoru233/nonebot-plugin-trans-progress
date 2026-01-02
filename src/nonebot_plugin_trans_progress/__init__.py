@@ -136,8 +136,8 @@ async def find_episode(project: Project, keyword: str) -> Episode | None:
 # 1. 帮助指令
 cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=True)
 
-@cmd_help.handle(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg())
-async def _():
+@cmd_help.handle()
+async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = Message(
         "✨ 汉化组小助手在这里捏！\n"
         "========================\n"
