@@ -422,7 +422,6 @@ async def update_member(id: int, form: MemberUpdate):
     u = await User.get_or_none(id=id)
     if not u: raise HTTPException(404)
     u.name = form.name
-    u.tags = form.tags # 更新成员标签
     u.tags = form.tags
     await u.save()
     return {"status": "success"}
@@ -442,12 +441,6 @@ async def get_settings_list():
     if not synced_group_ids: return []
 
     group_name_map = {}
-        bot = get_bot()
-        for g in group_list: group_name_map[str(g['group_id'])] = g['group_name']
-    except:
-        projects = await Project.filter(group_id__in=synced_group_ids).all()
-        for p in projects:
-            if p.group_name: group_name_map[p.group_id] = p.group_name
 
     for bot in get_bots().values():
         if isinstance(bot, Bot):
