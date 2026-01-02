@@ -1,3 +1,4 @@
+import os
 from nonebot import on_command, require, get_driver, logger, get_plugin_config, get_asgi
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.params import CommandArg
@@ -13,6 +14,7 @@ from . import scheduler
 
 try:
     from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
 except ImportError:
     FastAPI = None
 
@@ -66,12 +68,23 @@ async def init_web():
     sub_app = FastAPI(
         title="汉化进度管理",
         description="NoneBot Plugin Trans Progress API",
-        version="0.3.12",
+        version="0.3.13",
         docs_url="/docs",
         openapi_url="/openapi.json"
     )
 
+    # 手动添加首页路由 (无锁)
+    @sub_app.get("/", response_class=HTMLResponse)
+    async def index_page():
+        template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+        if os.path.exists(template_path):
+            with open(template_path, "r", encoding="utf-8") as f:
+                return f.read()
+        return "<h1>Template not found</h1>"
+
+    # 挂载 web.py 的 API 路由 (自带锁)
     sub_app.include_router(api_router)
+
     logger.opt(colors=True).info(f"正在挂载 Web 后台到 <y>/trans</y> ...")
 
     try:

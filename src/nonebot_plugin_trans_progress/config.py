@@ -7,6 +7,8 @@ class Config(BaseModel):
     trans_db_url: str = "postgres://postgres:password@127.0.0.1:5432/trans_db"
     # Web访问密码
     trans_auth_password: str = "admin"
+    # Moeflow Backend 后端 API 地址，不带尾部斜杠
+    moeflow_api_url: str = "http://127.0.0.1:8000"
 
 
 # 配置加载

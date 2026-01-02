@@ -1,17 +1,18 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
+
 from fastapi import APIRouter, HTTPException, Depends, Header
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from nonebot import get_bot, logger, get_plugin_config
-from nonebot.adapters.onebot.v11 import Message, MessageSegment
+from nonebot import get_bots, logger, get_plugin_config
+from nonebot.adapters.onebot.v11 import Message, MessageSegment, Bot
 
 from .models import Project, Episode, User, GroupSetting
 from .utils import get_default_ddl, send_group_message
 from .config import Config
 from .broadcast import check_and_send_broadcast
+
 
 plugin_config = get_plugin_config(Config)
 
@@ -20,14 +21,13 @@ async def verify_token(x_auth_token: str = Header(..., alias="X-Auth-Token")):
         raise HTTPException(status_code=401, detail="Invalid Password")
     return x_auth_token
 
-app = APIRouter()
 api_router = APIRouter(dependencies=[Depends(verify_token)])
 
 # --- Pydantic Models ---
 class ProjectCreate(BaseModel):
     name: str
     aliases: List[str] = []
-    tags: List[str] = []      # 新增
+    tags: List[str] = []
     group_id: str
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
@@ -37,7 +37,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str
     aliases: List[str] = []
-    tags: List[str] = []      # 新增
+    tags: List[str] = []
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -45,7 +45,7 @@ class ProjectUpdate(BaseModel):
 
 class MemberUpdate(BaseModel):
     name: str
-    tags: List[str] = []      # 新增
+    tags: List[str] = []
 
 class EpisodeCreate(BaseModel):
     project_name: str
@@ -83,13 +83,21 @@ async def get_db_user(qq, group_id):
     if not qq: return None
     return await User.get_or_none(qq_id=qq, group_id=group_id)
 
-# --- Routes ---
+async def find_bot_for_group(group_id: str) -> Optional[Bot]:
+    """遍历所有 Bot，找到在该群内的一个 Bot"""
+    all_bots = get_bots()
+    for bot in all_bots.values():
+        if isinstance(bot, Bot):
+            try:
+                # 获取群列表缓存
+                g_list = await bot.get_group_list()
+                if any(str(g['group_id']) == str(group_id) for g in g_list):
+                    return bot
+            except Exception:
+                continue
+    return None
 
-@app.get("/", response_class=HTMLResponse)
-async def index_page():
-    import os
-    with open(os.path.join(os.path.dirname(__file__), "templates", "index.html"), "r", encoding="utf-8") as f:
-        return f.read()
+# --- Routes ---
 
 @api_router.get("/groups/all")
 async def get_all_bot_groups():
@@ -97,7 +105,7 @@ async def get_all_bot_groups():
     groups_map = {}
 
     for bot in get_bots().values():
-        if isinstance(bot, OneBotV11Bot):
+        if isinstance(bot, Bot):
             try:
                 g_list = await bot.get_group_list()
                 for g in g_list:
@@ -113,15 +121,23 @@ async def get_all_bot_groups():
 
 @api_router.get("/groups/db")
 async def get_db_groups():
+    # === 修复: 正确遍历所有 Bot 获取群名映射 ===
+    all_groups_map = {}
+    for bot in get_bots().values():
+        if isinstance(bot, Bot):
+            try:
+                g_list = await bot.get_group_list()
+                for g in g_list:
+                    all_groups_map[str(g['group_id'])] = g['group_name']
+            except: pass
+
     try:
-        bot = get_bot()
-        all_groups = await bot.get_group_list()
         db_group_ids = set(await User.all().distinct().values_list("group_id", flat=True))
         filtered = []
-        for g in all_groups:
-            gid = str(g['group_id'])
-            if gid in db_group_ids:
-                filtered.append({"group_id": gid, "group_name": g['group_name']})
+        for gid in db_group_ids:
+            # 如果 Bot 在群里，用 Bot 获取的实时群名，否则用 "未知群聊"
+            g_name = all_groups_map.get(gid, "未知群聊(Bot不在群内)")
+            filtered.append({"group_id": gid, "group_name": g_name})
         return filtered
     except Exception as e:
         logger.error(f"获取DB群列表失败: {e}")
@@ -131,14 +147,15 @@ async def get_db_groups():
 async def get_projects():
     projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter')
 
+    # === 修复: 正确遍历所有 Bot 获取群名 ===
     bot_groups_map = {}
-    try:
-        from nonebot import get_bot
-        bot = get_bot()
-        g_list = await bot.get_group_list()
-        for g in g_list:
-            bot_groups_map[str(g['group_id'])] = g['group_name']
-    except: pass
+    for bot in get_bots().values():
+        if isinstance(bot, Bot):
+            try:
+                g_list = await bot.get_group_list()
+                for g in g_list:
+                    bot_groups_map[str(g['group_id'])] = g['group_name']
+            except: pass
 
     result = []
     for p in projects:
@@ -181,13 +198,24 @@ async def get_members():
 
 @api_router.post("/group/sync_members")
 async def sync_group_members(data: SyncGroupModel):
+    gid = str(data.group_id)
+
+    # === 修复: 使用 helper 查找正确的 Bot ===
+    target_bot = await find_bot_for_group(gid)
+
+    if not target_bot:
+        raise HTTPException(500, f"没有找到任何 OneBot V11 账号加入了群 {gid}")
+
     try:
-        bot = get_bot()
-        gid = int(data.group_id)
-        g_info = await bot.get_group_info(group_id=gid)
+        # 获取群信息
+        g_info = await target_bot.get_group_info(group_id=int(gid))
         g_name = g_info.get("group_name", "未知群聊")
-        await Project.filter(group_id=data.group_id).update(group_name=g_name)
-        member_list = await bot.get_group_member_list(group_id=gid)
+
+        # 更新数据库中的群名
+        await Project.filter(group_id=gid).update(group_name=g_name)
+
+        # 获取群成员
+        member_list = await target_bot.get_group_member_list(group_id=int(gid))
     except Exception as e:
         raise HTTPException(500, f"Bot通讯失败: {e}")
 
@@ -198,12 +226,12 @@ async def sync_group_members(data: SyncGroupModel):
         qq = str(m['user_id'])
         name = m['card'] or m['nickname'] or f"用户{qq}"
         # 如果存在则更新名字，不存在则创建
-        u = await User.get_or_none(qq_id=qq, group_id=data.group_id)
+        u = await User.get_or_none(qq_id=qq, group_id=gid)
         if u:
             u.name = name
             await u.save()
         else:
-            await User.create(qq_id=qq, group_id=data.group_id, name=name)
+            await User.create(qq_id=qq, group_id=gid, name=name)
         count += 1
     return {"status": "success", "count": count, "group_name": g_name}
 
@@ -212,19 +240,22 @@ async def create_project(proj: ProjectCreate):
     if await Project.filter(name=proj.name).exists():
         raise HTTPException(400, "项目名已存在")
 
-    g_name = "未同步"
-    try:
-        info = await get_bot().get_group_info(group_id=int(proj.group_id))
-        g_name = info.get("group_name", "未同步")
-    except: pass
-
     gid = proj.group_id
+
+    bot = await find_bot_for_group(gid)
+    g_name = "未同步"
+
+    if bot:
+        try:
+            info = await bot.get_group_info(group_id=int(gid))
+            g_name = info.get("group_name", "未同步")
+        except: pass
+
     leader = await get_db_user(proj.leader_qq, gid)
 
     # 自动创建负责人
-    if not leader and proj.leader_qq:
+    if not leader and proj.leader_qq and bot:
          try:
-            bot = get_bot()
             u_info = await bot.get_group_member_info(group_id=int(gid), user_id=int(proj.leader_qq))
             leader = await User.create(qq_id=proj.leader_qq, group_id=gid, name=u_info['card'] or u_info['nickname'])
          except: pass
@@ -257,6 +288,7 @@ async def create_project(proj: ProjectCreate):
             seen_qq.add(user.qq_id)
     msg += Message("\n✨ 大家加油！")
 
+    # 使用 utils 中的发送逻辑，它会自动找 Bot
     await send_group_message(int(gid), msg)
     return {"status": "success"}
 
@@ -295,6 +327,7 @@ async def add_episode(ep: EpisodeCreate):
     msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
     if trans: msg += Message("翻译就决定是你了！") + MessageSegment.at(trans.qq_id) + Message(" 冲鸭！")
     else: msg += Message("✍️ 翻译未分锅")
+
     await send_group_message(int(gid), msg)
     return {"status": "created"}
 
@@ -390,6 +423,7 @@ async def update_member(id: int, form: MemberUpdate):
     if not u: raise HTTPException(404)
     u.name = form.name
     u.tags = form.tags # 更新成员标签
+    u.tags = form.tags
     await u.save()
     return {"status": "success"}
 
@@ -408,14 +442,19 @@ async def get_settings_list():
     if not synced_group_ids: return []
 
     group_name_map = {}
-    try:
         bot = get_bot()
-        group_list = await bot.get_group_list()
         for g in group_list: group_name_map[str(g['group_id'])] = g['group_name']
     except:
         projects = await Project.filter(group_id__in=synced_group_ids).all()
         for p in projects:
             if p.group_name: group_name_map[p.group_id] = p.group_name
+
+    for bot in get_bots().values():
+        if isinstance(bot, Bot):
+            try:
+                g_list = await bot.get_group_list()
+                for g in g_list: group_name_map[str(g['group_id'])] = g['group_name']
+            except: pass
 
     settings_db = await GroupSetting.filter(group_id__in=synced_group_ids).all()
     settings_map = {s.group_id: s for s in settings_db}
@@ -480,5 +519,3 @@ async def update_setting(form: SettingUpdate):
 async def remind_now(form: RemindNow):
     await check_and_send_broadcast(form.group_id, is_manual=True)
     return {"status": "success"}
-
-app.include_router(api_router)
