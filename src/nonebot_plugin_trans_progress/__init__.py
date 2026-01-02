@@ -1,4 +1,4 @@
-from nonebot import on_command, require, get_driver, logger, get_plugin_config
+from nonebot import on_command, require, get_driver, logger, get_plugin_config, get_asgi
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
@@ -62,11 +62,11 @@ async def init_web():
         logger.warning("未检测到 FastAPI 库，Web 后台无法启动。")
         return
 
-    root_app = nonebot.get_asgi()
+    root_app = get_asgi()
     sub_app = FastAPI(
         title="汉化进度管理",
         description="NoneBot Plugin Trans Progress API",
-        version="0.3.11",
+        version="0.3.12",
         docs_url="/docs",
         openapi_url="/openapi.json"
     )
