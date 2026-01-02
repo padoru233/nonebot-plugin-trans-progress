@@ -113,4 +113,6 @@
 ### 🎨 效果图
 如果有效果图的话
 
-![https://count.getloli.com/@:nonebot-plugin-trans-progress?theme=gelbooru](https://count.getloli.com/@nonebot-plugin-trans-progress?name=nonebot-plugin-trans-progress&theme=booru-qualityhentais&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
+<div align="center">
+  <img src="https://count.getloli.com/@nonebot-plugin-trans-progress?name=nonebot-plugin-trans-progress&theme=booru-qualityhentais&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto" alt="nonebot-plugin-trans-progress" />
+</div>
