@@ -6,11 +6,15 @@ from tortoise import Tortoise
 from tortoise.queryset import Q
 
 from .models import Project, Episode, User
-# 引入 send_group_message
 from .utils import get_default_ddl, send_group_message
-from .web import app as web_app
+from .web import api_router
 from .config import Config
 from . import scheduler
+
+try:
+    from fastapi import FastAPI
+except ImportError:
+    FastAPI = None
 
 driver = get_driver()
 plugin_config = get_plugin_config(Config)
@@ -54,8 +58,26 @@ async def close_db():
 
 @driver.on_startup
 async def init_web():
-    app = driver.server_app
-    app.include_router(web_app, prefix="/trans", tags=["汉化进度管理"])
+    if not FastAPI:
+        logger.warning("未检测到 FastAPI 库，Web 后台无法启动。")
+        return
+
+    root_app = nonebot.get_asgi()
+    sub_app = FastAPI(
+        title="汉化进度管理",
+        description="NoneBot Plugin Trans Progress API",
+        version="0.3.10",
+        docs_url="/docs",
+        openapi_url="/openapi.json"
+    )
+
+    sub_app.include_router(api_router)
+    logger.opt(colors=True).info(f"正在挂载 Web 后台到 <y>/trans</y> ...")
+
+    try:
+        root_app.mount("/trans", sub_app)
+    except AttributeError:
+        logger.warning("当前驱动器不支持 mount 操作，Web 后台可能无法访问 (请确保使用的是 ASGI 驱动器)")
 
 # === 辅助函数：智能查找项目 ===
 async def find_project(keyword: str) -> Project | None:
@@ -114,9 +136,9 @@ async def find_episode(project: Project, keyword: str) -> Episode | None:
 # 1. 帮助指令
 cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=True)
 
-@cmd_help.handle()
+@cmd_help.handle(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg())
 async def _():
-    msg = (
+    msg = Message(
         "✨ 汉化组小助手在这里捏！\n"
         "========================\n"
         "🧐 想看进度?\n"
@@ -131,8 +153,9 @@ async def _():
         "========================\n"
         "大家辛苦啦，要注意休息哦"
     )
-    # 帮助指令简单回复，直接 finish 即可，或者也改成 send_group_message
-    await cmd_help.finish(msg)
+    # 使用通用发送函数
+    await send_group_message(int(event.group_id), msg, bot=bot)
+    await cmd_finish.finish()
 
 
 # 2. 完成指令
@@ -251,7 +274,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             reply += Message("⚠️ 哎呀，下一棒还没人接手！组长快来分锅！🍲")
 
     # 使用通用发送函数
-    await send_group_message(int(event.group_id), reply)
+    await send_group_message(int(event.group_id), reply, bot=bot)
     await cmd_finish.finish()
 
 
@@ -346,4 +369,6 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
                 ddl_str = f"|📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
                 reply += f"[{s_map.get(ep.status)}]{ep.title}{ddl_str}\n"
 
-        await cmd_view.finish(reply.strip())
+        # 使用通用发送函数
+        await send_group_message(int(event.group_id), reply, bot=bot)
+        await cmd_finish.finish()

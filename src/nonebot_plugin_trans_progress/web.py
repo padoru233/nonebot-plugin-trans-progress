@@ -93,13 +93,23 @@ async def index_page():
 
 @api_router.get("/groups/all")
 async def get_all_bot_groups():
-    try:
-        bot = get_bot()
-        group_list = await bot.get_group_list()
-        return [{"group_id": str(g['group_id']), "group_name": g['group_name']} for g in group_list]
-    except Exception as e:
-        logger.error(f"获取Bot群列表失败: {e}")
-        return []
+    """遍历所有 OneBot V11 机器人的群列表并合并"""
+    groups_map = {}
+
+    for bot in get_bots().values():
+        if isinstance(bot, OneBotV11Bot):
+            try:
+                g_list = await bot.get_group_list()
+                for g in g_list:
+                    gid = str(g['group_id'])
+                    groups_map[gid] = {
+                        "group_id": gid,
+                        "group_name": g['group_name']
+                    }
+            except Exception as e:
+                logger.warning(f"Bot {bot.self_id} 获取群列表异常: {e}")
+
+    return list(groups_map.values())
 
 @api_router.get("/groups/db")
 async def get_db_groups():
