@@ -34,7 +34,8 @@
         .status-tag-1 { color: #409eff; background: #ecf5ff; border-color: #d9ecff; }
         .status-tag-2 { color: #e6a23c; background: #fdf6ec; border-color: #faecd8; }
         .status-tag-3 { color: #67c23a; background: #f0f9eb; border-color: #e1f3d8; }
-        .status-tag-4 { color: #ffffff; background: #67c23a; border-color: #67c23a; }
+        .status-tag-4 { color: #b37feb; background: #f9f0ff; border-color: #e9d8fd; }
+        .status-tag-5 { color: #ffffff; background: #67c23a; border-color: #67c23a; }
         /* 标签小圆点 */
         .tag-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
     </style>
@@ -118,7 +119,7 @@
                                         <el-table-column prop="title" label="话数" width="70"></el-table-column>
                                         <el-table-column label="状态" width="75" align="center">
                                             <template #default="{row}">
-                                                <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status" effect="light" size="small">{{ ['未','翻','校','嵌','完'][row.status] || row.status }}</el-tag>
+                                                <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status" effect="light" size="small">{{ ['未','翻','校','嵌','监','完'][row.status] || row.status }}</el-tag>
                                             </template>
                                         </el-table-column>
                                         <el-table-column label="进度详情">
@@ -126,6 +127,7 @@
                                                 <div class="stage-box" :class="{active: row.status===1}"><span class="label">翻</span><span class="user">{{ row.translator?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_trans, row.status===1)}">{{ fmtDate(row.ddl_trans) }}</span></div>
                                                 <div class="stage-box" :class="{active: row.status===2}"><span class="label">校</span><span class="user">{{ row.proofreader?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_proof, row.status===2)}">{{ fmtDate(row.ddl_proof) }}</span></div>
                                                 <div class="stage-box" :class="{active: row.status===3}"><span class="label">嵌</span><span class="user">{{ row.typesetter?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_type, row.status===3)}">{{ fmtDate(row.ddl_type) }}</span></div>
+                                                <div class="stage-box" :class="{active: row.status===4}"><span class="label">监</span><span class="user">{{ row.supervisor?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_supervision, row.status===4)}">{{ fmtDate(row.ddl_supervision) }}</span></div>
                                             </template>
                                         </el-table-column>
                                         <el-table-column width="60" align="center" fixed="right">
@@ -222,9 +224,10 @@
                     </el-form-item>
                     <el-divider content-position="left">默认人员配置</el-divider>
                     <el-row :gutter="10">
-                        <el-col :span="8"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
-                        <el-col :span="8"><el-select v-model="forms.project.default_proofreader_qq" placeholder="默认校对" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
-                        <el-col :span="8"><el-select v-model="forms.project.default_typesetter_qq" placeholder="默认嵌字" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_proofreader_qq" placeholder="默认校对" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_typesetter_qq" placeholder="默认嵌字" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_supervisor_qq" placeholder="默认监修" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
                     </el-row>
                 </el-form>
                 <template #footer><el-button type="primary" size="large" @click="submitProject" style="width: 100%">保存</el-button></template>
@@ -233,16 +236,46 @@
             <el-dialog v-model="dialogs.episode" :title="forms.episode.id ? '编辑进度' : '新建话数'" width="600px">
                 <el-form :model="forms.episode" label-width="50px" size="large">
                     <el-form-item label="标题"><el-input v-model="forms.episode.title" placeholder="输入标题"></el-input></el-form-item>
+
                     <el-form-item label="状态" v-if="forms.episode.id">
                         <el-radio-group v-model="forms.episode.status">
-                            <el-radio-button :label="1">翻译</el-radio-button><el-radio-button :label="2">校对</el-radio-button><el-radio-button :label="3">嵌字</el-radio-button><el-radio-button :label="4">完结</el-radio-button>
+                            <el-radio-button :label="1">翻译</el-radio-button>
+                            <el-radio-button :label="2">校对</el-radio-button>
+                            <el-radio-button :label="3">嵌字</el-radio-button>
+                            <el-radio-button :label="4">监修</el-radio-button>
+                            <el-radio-button :label="5">完结</el-radio-button>
                         </el-radio-group>
                     </el-form-item>
+
                     <div v-for="(stage, idx) in stages" :key="idx">
                         <div style="font-weight: bold; margin: 10px 0 5px; color: #606266;">{{ stage.label }}阶段</div>
                         <el-row :gutter="10">
-                            <el-col :span="12"><el-select v-model="forms.episode[stage.userField]" :placeholder="stage.label + '人员'" clearable filterable style="width: 100%"><el-option v-for="m in currentProjectMembers" :key="m.qq_id" :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id"></el-option></el-select></el-col>
-                            <el-col :span="12"><el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期" style="width: 100%" value-format="YYYY-MM-DDTHH:mm:ss"></el-date-picker></el-col>
+                            <el-col :span="12">
+                                <el-select
+                                    v-model="forms.episode[stage.userField]"
+                                    :placeholder="stage.label + '人员'"
+                                    clearable
+                                    filterable
+                                    :filter-method="(q) => onEpisodeMemberFilter(q, stage.userField)"
+                                    @visible-change="(v) => !v && onEpisodeMemberFilter('', stage.userField)"
+                                    style="width: 100%">
+
+                                    <el-option
+                                        v-for="m in getFilteredEpisodeMembers(stage.userField)"
+                                        :key="m.qq_id"
+                                        :label="m.name + ' (' + m.qq_id + ')'"
+                                        :value="m.qq_id">
+
+                                        <span style="float: left">{{ m.name }}</span>
+                                        <span v-if="m.tags && m.tags.length" style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                            {{ m.tags.join(' ') }}
+                                        </span>
+                                    </el-option>
+                                </el-select>
+                            </el-col>
+                            <el-col :span="12">
+                                <el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期" style="width: 100%" value-format="YYYY-MM-DDTHH:mm:ss"></el-date-picker>
+                            </el-col>
                         </el-row>
                     </div>
                 </el-form>
@@ -299,8 +332,8 @@
                 const memberKeyword = ref('');
 
                 const forms = reactive({
-                    project: { id: null, name: '', aliases: [], tags: [], group_id: '', leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '' },
-                    episode: { id: null, project_name: '', title: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null },
+                    project: { id: null, name: '', aliases: [], tags: [], group_id: '', leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
+                    episode: { id: null, project_name: '', title: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
                     sync_group: '',
                     member: { id: null, name: '', tags: [] }
                 });
@@ -310,7 +343,8 @@
                 const stages = [
                     { label: '翻译', userField: 'translator_qq', dateField: 'ddl_trans' },
                     { label: '校对', userField: 'proofreader_qq', dateField: 'ddl_proof' },
-                    { label: '嵌字', userField: 'typesetter_qq', dateField: 'ddl_type' }
+                    { label: '嵌字', userField: 'typesetter_qq', dateField: 'ddl_type' },
+                    { label: '监修', userField: 'supervisor_qq', dateField: 'ddl_supervision' }
                 ];
 
                 axios.interceptors.request.use(config => { const token = localStorage.getItem('trans_token'); if (token) config.headers['X-Auth-Token'] = token; return config; });
@@ -334,10 +368,10 @@
                 const addWeeks = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n * 7); const offset = d.getTimezoneOffset() * 60000; return (new Date(d - offset)).toISOString().slice(0, 19); };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id:null, name:'', aliases: [], tags: [], group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '' }; dialogs.project = true; };
+                const openCreateProject = () => { forms.project = { id:null, name:'', aliases: [], tags: [], group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
-                    forms.project = { id:p.id, name:p.name, aliases: p.aliases || [], tags: p.tags || [], group_id:p.group_id, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type };
+                    forms.project = { id:p.id, name:p.name, aliases: p.aliases || [], tags: p.tags || [], group_id:p.group_id, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
@@ -347,9 +381,9 @@
                 const handleDelProject = async(p) => { if(confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); }};
 
                 // === Episode Logic ===
-                const openAddEpisode = (p) => { currentEditingProjectGroupId.value = p.group_id; const now = new Date(); forms.episode = { id: null, project_name: p.name, title: '', status: 1, translator_qq: p.defaults.trans, proofreader_qq: p.defaults.proof, typesetter_qq: p.defaults.type, ddl_trans: addWeeks(now, 2), ddl_proof: addWeeks(now, 4), ddl_type: addWeeks(now, 6) }; dialogs.episode = true; };
-                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type }; dialogs.episode = true; };
-                const submitEpisode = async () => { const pl = {...forms.episode}; ['translator_qq','proofreader_qq','typesetter_qq'].forEach(k=>{if(!pl[k]) pl[k]=null}); try { if(pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch(e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
+                const openAddEpisode = (p) => { currentEditingProjectGroupId.value = p.group_id; const now = new Date(); forms.episode = { id: null, project_name: p.name, title: '', status: 1, translator_qq: p.defaults.trans, proofreader_qq: p.defaults.proof, typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super, ddl_trans: addWeeks(now, 2), ddl_proof: addWeeks(now, 4), ddl_type: addWeeks(now, 6), ddl_supervision: addWeeks(now, 8) }; dialogs.episode = true; };
+                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
+                const submitEpisode = async () => { const pl = {...forms.episode}; ['translator_qq','proofreader_qq','typesetter_qq','supervisor_qq'].forEach(k=>{if(!pl[k]) pl[k]=null}); try { if(pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch(e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
                 // === Member Logic ===
                 const submitSync = async() => { loading.value = true; try { await axios.post(`${API}/group/sync_members`, {group_id: forms.sync_group}); dialogs.sync=false; fetchData(); ElementPlus.ElMessage.success('同步成功'); } catch(e) { ElementPlus.ElMessage.error('同步失败'); } finally { loading.value = false; } };
@@ -390,6 +424,29 @@
                     );
                 });
 
+                // [新增] 用于存储进度弹窗中每个下拉框的搜索关键词
+                const episodeSearchMap = reactive({});
+
+                // [新增] 自定义搜索触发方法
+                const onEpisodeMemberFilter = (query, field) => {
+                    episodeSearchMap[field] = query;
+                };
+
+                // [新增] 获取过滤后的成员列表
+                const getFilteredEpisodeMembers = (field) => {
+                    const k = (episodeSearchMap[field] || '').toLowerCase();
+                    const source = currentProjectMembers.value; // 使用当前项目的成员列表
+
+                    if (!k) return source; // 如果没有搜素词，返回全部
+
+                    // 匹配逻辑：名字 OR QQ号 OR 标签
+                    return source.filter(m =>
+                        m.name.toLowerCase().includes(k) ||
+                        m.qq_id.includes(k) ||
+                        (m.tags && m.tags.some(t => t.toLowerCase().includes(k)))
+                    );
+                };
+
                 const filteredProjects = computed(() => {
                     return projects.value.filter(p => {
                         const k = filters.keyword.toLowerCase();
@@ -399,8 +456,8 @@
                         if (filters.member) {
                             const qq = filters.member;
                             const isLeader = p.leader?.qq_id === qq;
-                            const isDef = p.defaults.trans === qq || p.defaults.proof === qq || p.defaults.type === qq;
-                            const isInEp = p.episodes.some(e => e.translator?.qq_id === qq || e.proofreader?.qq_id === qq || e.typesetter?.qq_id === qq);
+                            const isDef = p.defaults.trans === qq || p.defaults.proof === qq || p.defaults.type === qq || p.defaults.super === qq ;
+                            const isInEp = p.episodes.some(e => e.translator?.qq_id === qq || e.proofreader?.qq_id === qq || e.typesetter?.qq_id === qq || e.supervisor?.qq_id === qq);
                             matchMem = isLeader || isDef || isInEp;
                         }
                         return matchKw && matchTag && matchMem;
@@ -429,6 +486,7 @@
                     submitSync, openEditMember, submitMember, handleDelMember,
                     handleSettingChange, handleRemindNow,
                     computedProjectMembersForEdit, currentProjectMembers,
+                    episodeSearchMap, onEpisodeMemberFilter, getFilteredEpisodeMembers,
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver
                 };

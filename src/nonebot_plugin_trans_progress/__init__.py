@@ -219,6 +219,11 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             target_user_name = episode.typesetter.name
             if episode.typesetter.qq_id == qq_id: is_assignee = True
     elif current_status == 4:
+        stage_name = "监修"
+        if episode.supervisor:
+            target_user_name = episode.supervisor.name
+            if episode.supervisor.qq_id == qq_id: is_assignee = True
+    elif current_status == 5:
         await cmd_finish.finish("✅ 这个任务已经是完结状态啦")
     else:
         await cmd_finish.finish("⚠️ 这个任务还没在后台分配人员呢，先去Web端把锅分好再说吧！")
@@ -246,20 +251,25 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         next_user = episode.typesetter
     elif current_status == 3:
         episode.status = 4
+        if not episode.ddl_supervision: episode.ddl_supervision = get_default_ddl()
+        next_role = "监修"
+        next_user = episode.supervisor
+    elif current_status == 4:
+        episode.status = 5
         next_role = "发布"
         next_user = None
 
     await episode.save()
 
     # 5. 发送反馈
-    status_text = ['','翻译','校对','嵌字'][current_status]
+    status_text = ['','翻译','校对','嵌字','监修'][current_status]
 
     reply = Message(f"🎉 辛苦啦！[{project.name} {episode.title}] {status_text}搞定！✨")
     if not is_assignee:
         reply += Message(f" (由 {event.sender.card or event.sender.nickname} 代提交)")
     reply += Message("\n")
 
-    if episode.status == 4:
+    if episode.status == 5:
         reply += Message("🎆 撒花！全工序完结！")
         target_qq = None
         if project.leader:
@@ -278,11 +288,16 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             reply += Message("\n请管理员查收发布")
     else:
         reply += Message(f"➡️ 进入 [{next_role}] 阶段\n")
-        next_ddl = episode.ddl_proof if episode.status == 2 else episode.ddl_type
+
+        next_ddl = None
+        if episode.status == 2: next_ddl = episode.ddl_proof
+        elif episode.status == 3: next_ddl = episode.ddl_type
+        elif episode.status == 4: next_ddl = episode.ddl_supervision
+
         if next_ddl:
             reply += Message(f"📅 死线: {next_ddl.strftime('%m-%d')}\n")
         if next_user:
-            reply += Message("接力棒交给你啦！") + MessageSegment.at(next_user.qq_id) + Message("拜托了捏~ 🙏")
+            reply += Message("接力棒交给你啦！") + MessageSegment.at(next_user.qq_id) + Message(" 拜托了捏~ 🙏")
         else:
             reply += Message("⚠️ 哎呀，下一棒还没人接手！组长快来分锅！🍲")
 
@@ -318,8 +333,9 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             dt = p.default_translator.name if p.default_translator else "-"
             dp = p.default_proofreader.name if p.default_proofreader else "-"
             dty = p.default_typesetter.name if p.default_typesetter else "-"
+            ds = p.default_supervisor.name if p.default_supervisor else "-"
             if dt != "-" or dp != "-" or dty != "-":
-                reply += f"\n   📦 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]"
+                reply += f"\n   📦 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]"
 
         await cmd_view.finish(reply.strip())
 
@@ -343,19 +359,20 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             d_str = ddl.strftime('%m-%d') if ddl else "♾️无死线"
             return f"{u_name} (📅{d_str})"
 
-        status_map = {0:'💤躺平中', 1:'✍️翻译中', 2:'🔍校对中', 3:'🎨嵌字中', 4:'🏆已完结'}
+        status_map = {0:'💤躺平中', 1:'✍️翻译中', 2:'🔍校对中', 3:'🎨嵌字中', 4:'👀监修中', 5:'🏆已完结'}
 
         reply = f"📝 【{project.name} {episode.title}】\n"
         reply += f"状态: {status_map.get(episode.status)}\n"
         reply += f"----------------\n"
         reply += f"翻译: {fmt_role(episode.translator, episode.ddl_trans)}\n"
         reply += f"校对: {fmt_role(episode.proofreader, episode.ddl_proof)}\n"
-        reply += f"嵌字: {fmt_role(episode.typesetter, episode.ddl_type)}"
+        reply += f"嵌字: {fmt_role(episode.typesetter, episode.ddl_type)}\n"
+        reply += f"监修: {fmt_role(episode.supervisor, episode.ddl_supervision)}"
 
         await cmd_view.finish(reply)
 
     else:
-        active_eps = await Episode.filter(project=project, status__lt=4).order_by('id').all()
+        active_eps = await Episode.filter(project=project, status__lt=5).order_by('id').all()
 
         reply = f"📊 【{project.name}】"
         if project.alias: reply += f" ({project.alias})"
@@ -365,7 +382,8 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         dt = project.default_translator.name if project.default_translator else "无"
         dp = project.default_proofreader.name if project.default_proofreader else "无"
         dty = project.default_typesetter.name if project.default_typesetter else "无"
-        reply += f"🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}]\n"
+        ds = project.default_supervisor.name if project.default_supervisor else "无"
+        reply += f"🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]\n"
         reply += f"----------------\n"
 
         if not active_eps:
@@ -373,11 +391,12 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         else:
             reply += f"🔥 进行中 ({len(active_eps)}):\n"
             for ep in active_eps:
-                s_map = {0:'未', 1:'翻', 2:'校', 3:'嵌'}
+                s_map = {0:'未', 1:'翻', 2:'校', 3:'嵌', 4:'监'}
                 curr_ddl = None
                 if ep.status == 1: curr_ddl = ep.ddl_trans
                 elif ep.status == 2: curr_ddl = ep.ddl_proof
                 elif ep.status == 3: curr_ddl = ep.ddl_type
+                elif ep.status == 4: curr_ddl = ep.ddl_supervision
 
                 ddl_str = f"|📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
                 reply += f"[{s_map.get(ep.status)}]{ep.title}{ddl_str}\n"

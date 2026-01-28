@@ -33,6 +33,7 @@ class ProjectCreate(BaseModel):
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
     default_typesetter_qq: Optional[str] = None
+    default_supervisor_qq: Optional[str] = None
 
 class ProjectUpdate(BaseModel):
     name: str
@@ -42,6 +43,7 @@ class ProjectUpdate(BaseModel):
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
     default_typesetter_qq: Optional[str] = None
+    default_supervisor_qq: Optional[str] = None
 
 class MemberUpdate(BaseModel):
     name: str
@@ -53,9 +55,11 @@ class EpisodeCreate(BaseModel):
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
+    supervisor_qq: Optional[str] = None
     ddl_trans: Optional[datetime] = None
     ddl_proof: Optional[datetime] = None
     ddl_type: Optional[datetime] = None
+    ddl_supervision: Optional[datetime] = None
 
 class EpisodeUpdate(BaseModel):
     title: str
@@ -145,7 +149,7 @@ async def get_db_groups():
 
 @api_router.get("/projects")
 async def get_projects():
-    projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter')
+    projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter', 'default_supervisor')
 
     # === 修复: 正确遍历所有 Bot 获取群名 ===
     bot_groups_map = {}
@@ -159,21 +163,24 @@ async def get_projects():
 
     result = []
     for p in projects:
-        eps = await Episode.filter(project=p).prefetch_related('translator', 'proofreader', 'typesetter').order_by('id').all()
+        eps = await Episode.filter(project=p).prefetch_related('translator', 'proofreader', 'typesetter', 'supervisor').order_by('id').all()
         ep_list = []
         for e in eps:
             ep_list.append({
                 "id": e.id, "title": e.title, "status": e.status,
                 "ddl_trans": e.ddl_trans, "ddl_proof": e.ddl_proof, "ddl_type": e.ddl_type,
+                "ddl_supervision": e.ddl_supervision,
                 "translator": {"name": e.translator.name, "qq_id": e.translator.qq_id} if e.translator else None,
                 "proofreader": {"name": e.proofreader.name, "qq_id": e.proofreader.qq_id} if e.proofreader else None,
                 "typesetter": {"name": e.typesetter.name, "qq_id": e.typesetter.qq_id} if e.typesetter else None,
+                "supervisor": {"name": e.supervisor.name, "qq_id": e.supervisor.qq_id} if e.supervisor else None,
             })
 
         defaults = {
             "trans": p.default_translator.qq_id if p.default_translator else "",
             "proof": p.default_proofreader.qq_id if p.default_proofreader else "",
             "type": p.default_typesetter.qq_id if p.default_typesetter else "",
+            "super": p.default_supervisor.qq_id if p.default_supervisor else "",
         }
 
         real_group_name = bot_groups_map.get(p.group_id) or p.group_name or "未同步"
@@ -182,7 +189,7 @@ async def get_projects():
             "id": p.id,
             "name": p.name,
             "aliases": p.aliases,
-            "tags": p.tags, # 返回 Tags
+            "tags": p.tags,
             "group_id": p.group_id,
             "group_name": real_group_name,
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
@@ -264,12 +271,15 @@ async def create_project(proj: ProjectCreate):
     d_proof = await get_db_user(proj.default_proofreader_qq, gid)
     d_type = await get_db_user(proj.default_typesetter_qq, gid)
 
+    d_super = await get_db_user(proj.default_supervisor_qq, gid)
+
     await Project.create(
         name=proj.name,
         aliases=proj.aliases,
-        tags=proj.tags, # 保存 Tags
+        tags=proj.tags,
         group_id=gid, group_name=g_name, leader=leader,
-        default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type
+        default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type,
+        default_supervisor=d_super
     )
 
     msg = Message(f"🔨 挖到新坑啦！新坑开张：{proj.name}")
@@ -304,6 +314,7 @@ async def update_project(id: int, form: ProjectUpdate):
     p.default_translator = await get_db_user(form.default_translator_qq, gid)
     p.default_proofreader = await get_db_user(form.default_proofreader_qq, gid)
     p.default_typesetter = await get_db_user(form.default_typesetter_qq, gid)
+    p.default_supervisor = await get_db_user(form.default_supervisor_qq, gid)
     await p.save()
     return {"status": "success"}
 
@@ -323,7 +334,12 @@ async def add_episode(ep: EpisodeCreate):
     trans = await get_db_user(ep.translator_qq, gid)
     proof = await get_db_user(ep.proofreader_qq, gid)
     type_ = await get_db_user(ep.typesetter_qq, gid)
-    await Episode.create(project=project, title=ep.title, status=1, translator=trans, proofreader=proof, typesetter=type_, ddl_trans=ep.ddl_trans, ddl_proof=ep.ddl_proof, ddl_type=ep.ddl_type)
+    super_ = await get_db_user(ep.supervisor_qq, gid)
+    await Episode.create(
+        project=project, title=ep.title, status=1,
+        translator=trans, proofreader=proof, typesetter=type_, supervisor=super_,
+        ddl_trans=ep.ddl_trans, ddl_proof=ep.ddl_proof, ddl_type=ep.ddl_type, ddl_supervision=ep.ddl_supervision
+    )
     msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
     if trans: msg += Message("翻译就决定是你了！") + MessageSegment.at(trans.qq_id) + Message(" 冲鸭！")
     else: msg += Message("✍️ 翻译未分锅")
@@ -333,7 +349,7 @@ async def add_episode(ep: EpisodeCreate):
 
 @api_router.put("/episode/{id}")
 async def update_episode(id: int, form: EpisodeUpdate):
-    ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter')
+    ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter', 'supervisor')
     if not ep: raise HTTPException(404)
     gid = int(ep.project.group_id)
 
@@ -341,6 +357,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
     new_trans = await get_db_user(form.translator_qq, str(gid))
     new_proof = await get_db_user(form.proofreader_qq, str(gid))
     new_type = await get_db_user(form.typesetter_qq, str(gid))
+    new_super = await get_db_user(form.supervisor_qq, str(gid))
 
     # 2. 对比差异，生成通知
     changes = []
@@ -354,7 +371,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
         changes.append(f"标题: {ep.title} -> {form.title}")
 
     # 检查状态
-    status_map = {0: '未开始', 1: '翻译', 2: '校对', 3: '嵌字', 4: '完结'}
+    status_map = {0: '未开始', 1: '翻译', 2: '校对', 3: '嵌字', 4: '监修', 5: '完结'}
     if ep.status != form.status:
         old_s = status_map.get(ep.status, str(ep.status))
         new_s = status_map.get(form.status, str(form.status))
@@ -363,6 +380,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
         if form.status == 1 and new_trans: mentions_qq.add(new_trans.qq_id)
         elif form.status == 2 and new_proof: mentions_qq.add(new_proof.qq_id)
         elif form.status == 3 and new_type: mentions_qq.add(new_type.qq_id)
+        elif form.status == 4 and new_super: mentions_qq.add(new_super.qq_id)
 
     # 辅助函数：检查具体工序的人员和DDL变动
     def check_role_change(label, old_u, new_u, old_ddl, new_ddl):
@@ -384,6 +402,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
     check_role_change("翻译", ep.translator, new_trans, ep.ddl_trans, form.ddl_trans)
     check_role_change("校对", ep.proofreader, new_proof, ep.ddl_proof, form.ddl_proof)
     check_role_change("嵌字", ep.typesetter, new_type, ep.ddl_type, form.ddl_type)
+    check_role_change("监修", ep.supervisor, new_super, ep.ddl_supervision, form.ddl_supervision)
 
     # 3. 更新数据
     ep.title = form.title
@@ -391,9 +410,11 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.translator = new_trans
     ep.proofreader = new_proof
     ep.typesetter = new_type
+    ep.supervisor = new_super
     ep.ddl_trans = form.ddl_trans
     ep.ddl_proof = form.ddl_proof
     ep.ddl_type = form.ddl_type
+    ep.ddl_supervision = form.ddl_supervision
     await ep.save()
 
     # 4. 发送通知 (如果有变动)
@@ -453,7 +474,7 @@ async def get_settings_list():
     settings_map = {s.group_id: s for s in settings_db}
 
     # 获取所有未完结任务
-    active_eps = await Episode.filter(status__in=[1, 2, 3], project__group_id__in=synced_group_ids).prefetch_related('project', 'translator', 'proofreader', 'typesetter')
+    active_eps = await Episode.filter(status__in=[1, 2, 3, 4], project__group_id__in=synced_group_ids).prefetch_related('project', 'translator', 'proofreader', 'typesetter', 'supervisor')
     tasks_map = defaultdict(list)
 
     # 获取当前日期，用于判断超期
@@ -474,6 +495,9 @@ async def get_settings_list():
         elif ep.status == 3:
             stage_text, user_name = "嵌字", ep.typesetter.name if ep.typesetter else "未分配"
             current_ddl = ep.ddl_type
+        elif ep.status == 4:
+            stage_text, user_name = "监修", ep.supervisor.name if ep.supervisor else "未分配"
+            current_ddl = ep.ddl_supervision
 
         # === 新增判断逻辑 ===
         # 如果有死线 且 死线日期 < 今天，则标记为超期

@@ -15,9 +15,9 @@ async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
 
     # 1. 获取该群所有未完结任务
     active_eps = await Episode.filter(
-        status__in=[1, 2, 3],
+        status__in=[1, 2, 3, 4],
         project__group_id=group_id
-    ).prefetch_related('project', 'translator', 'proofreader', 'typesetter')
+    ).prefetch_related('project', 'translator', 'proofreader', 'typesetter', 'supervisor')
 
     msg_list = []
 
@@ -32,6 +32,8 @@ async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
             stage_name, target_user, current_ddl = "校对", ep.proofreader, ep.ddl_proof
         elif ep.status == 3:
             stage_name, target_user, current_ddl = "嵌字", ep.typesetter, ep.ddl_type
+        elif ep.status == 4:
+            stage_name, target_user, current_ddl = "监修", ep.supervisor, ep.ddl_supervision
 
         if not current_ddl:
             continue
@@ -54,7 +56,7 @@ async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
         line = Message(f"{prefix} [{ep.project.name} {ep.title}] ({stage_name}) ")
 
         if target_user:
-            line += MessageSegment.at(target_user.qq_id)
+            line += MessageSegment.at(target_user.qq_id) + Message(" ")
         else:
             line += Message("👻 (还没人认领)")
 
