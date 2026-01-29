@@ -327,7 +327,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
         current_gid = str(event.group_id)
 
-        projects = await Project.filter(group_id=current_gid).prefetch_related(
+        projects = await Project.filter(group_id=current_gid).order_by('-id').prefetch_related(
             'leader', 'default_translator', 'default_proofreader',
             'default_typesetter', 'default_supervisor'
         )
@@ -335,19 +335,34 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         if not projects:
             await cmd_view.finish("📭 本群目前没有正在进行的汉化项目哦 (空空如也)")
 
-        reply = f"📂   本群 ({current_gid}) 项目一览"
-        for p in projects:
-            reply += f"\n📌 {p.name}"
-            if p.aliases: reply += f" (别名: {','.join(p.aliases)})"
-            if p.leader: reply += f" | 👑 {p.leader.name}"
+        reply = f"📂 本群 ({current_gid}) 项目一览 | 共 {len(projects)} 个\n"
+        reply += "━━━━━━━━━━━━━━"
+
+        for i, p in enumerate(projects):
+            reply += f"\n【{i+1}】{p.name}"
+
+            info_parts = []
+            if p.leader:
+                info_parts.append(f"👑{p.leader.name}")
+            if p.aliases:
+                shown_aliases = p.aliases[:2]
+                alias_str = ",".join(shown_aliases)
+                if len(p.aliases) > 2: alias_str += "..."
+                info_parts.append(f"🏷️{alias_str}")
+
+            if info_parts:
+                reply += f"\n   {'  '.join(info_parts)}"
 
             dt = p.default_translator.name if p.default_translator else "-"
             dp = p.default_proofreader.name if p.default_proofreader else "-"
             dty = p.default_typesetter.name if p.default_typesetter else "-"
             ds = p.default_supervisor.name if p.default_supervisor else "-"
 
-            if dt != "-" or dp != "-" or dty != "-" or ds != "-":
-                reply += f"\n   📦 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]"
+            # 只有当设置了至少一个默认人员时才显示此行
+            if any(x != "-" for x in [dt, dp, dty, ds]):
+                reply += f"\n   🛡️ 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]"
+
+            reply += "\n━━━━━━━━━━━━━━"
 
         await cmd_view.finish(reply.strip())
 
@@ -368,14 +383,14 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
         def fmt_role(user, ddl):
             u_name = user.name if user else "❌未分配"
-            d_str = ddl.strftime('%m-%d') if ddl else "♾️无死线"
+            d_str = ddl.strftime('%m-%d') if ddl else "♾️"
             return f"{u_name} (📅{d_str})"
 
         status_map = {0:'💤躺平中', 1:'✍️翻译中', 2:'🔍校对中', 3:'🎨嵌字中', 4:'👀监修中', 5:'🏆已完结'}
 
-        reply = f"📝 【{project.name} {episode.title}】\n"
-        reply += f"状态: {status_map.get(episode.status)}\n"
-        reply += f"----------------\n"
+        reply = f"📝 {project.name} #{episode.title}\n"
+        reply += f"状态: {status_map.get(episode.status, '未知')}\n"
+        reply += f"━━━━━━━━━━━━━━\n"
         reply += f"翻译: {fmt_role(episode.translator, episode.ddl_trans)}\n"
         reply += f"校对: {fmt_role(episode.proofreader, episode.ddl_proof)}\n"
         reply += f"嵌字: {fmt_role(episode.typesetter, episode.ddl_type)}\n"
@@ -387,21 +402,21 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         active_eps = await Episode.filter(project=project, status__lt=5).order_by('id').all()
 
         reply = f"📊 【{project.name}】"
-        if project.aliases: reply += f" ({project.aliases})"
-        reply += "\n"
-        if project.leader: reply += f"👑 组长: {project.leader.name}\n"
+        if project.aliases: reply += f"\n🏷️ 别名: {','.join(project.aliases)}"
+        if project.leader: reply += f"\n👑 组长: {project.leader.name}"
+        reply += "\n━━━━━━━━━━━━━━n"
 
-        dt = project.default_translator.name if project.default_translator else "无"
-        dp = project.default_proofreader.name if project.default_proofreader else "无"
-        dty = project.default_typesetter.name if project.default_typesetter else "无"
-        ds = project.default_supervisor.name if project.default_supervisor else "无"
-        reply += f"🛡️ 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]\n"
-        reply += f"----------------\n"
+        dt = project.default_translator.name if project.default_translator else "-"
+        dp = project.default_proofreader.name if project.default_proofreader else "-"
+        dty = project.default_typesetter.name if project.default_typesetter else "-"
+        ds = project.default_supervisor.name if project.default_supervisor else "-"
+        reply += f"🛡️ 默认编制: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]\n"
+        reply += f"━━━━━━━━━━━━━━\n"
 
         if not active_eps:
             reply += "🎉 现在的坑都填完啦？或者是还没开坑？(空空如也)"
         else:
-            reply += f"🔥 进行中 ({len(active_eps)}):\n"
+            reply += f"🔥 进行中任务 ({len(active_eps)}):\n"
             for ep in active_eps:
                 s_map = {0:'未', 1:'翻', 2:'校', 3:'嵌', 4:'监'}
                 curr_ddl = None
@@ -410,9 +425,8 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
                 elif ep.status == 3: curr_ddl = ep.ddl_type
                 elif ep.status == 4: curr_ddl = ep.ddl_supervision
 
-                ddl_str = f"|📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
-                reply += f"[{s_map.get(ep.status)}]{ep.title}{ddl_str}\n"
+                ddl_str = f" | 📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
+                reply += f"[{s_map.get(ep.status)}] {ep.title}{ddl_str}\n"
 
-        # 使用通用发送函数
         await send_group_message(int(event.group_id), reply, bot=bot)
         await cmd_finish.finish()
