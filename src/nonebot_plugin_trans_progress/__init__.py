@@ -325,25 +325,22 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = args.extract_plain_text().strip().split()
 
     if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
-        # FIXED: Added 'default_supervisor' to avoid AttributeError
-        projects = await Project.all().prefetch_related(
+        current_gid = str(event.group_id)
+
+        projects = await Project.filter(group_id=current_gid).prefetch_related(
             'leader', 'default_translator', 'default_proofreader',
             'default_typesetter', 'default_supervisor'
         )
-        if not projects:
-            await cmd_view.finish("📭 现在的坑都填完啦？或者是还没开坑？(空空如也)")
 
-        reply = "📂   汉化组当前项目一览"
+        if not projects:
+            await cmd_view.finish("📭 本群目前没有正在进行的汉化项目哦 (空空如也)")
+
+        reply = f"📂   本群 ({current_gid}) 项目一览"
         for p in projects:
             reply += f"\n📌 {p.name}"
             if p.aliases: reply += f" (别名: {','.join(p.aliases)})"
-
-            g_name = p.group_name or "未同步群名"
-            reply += f"\n   群: {g_name} ({p.group_id})"
-
             if p.leader: reply += f" | 👑 {p.leader.name}"
 
-            # Safely access name now that prefetch_related is used
             dt = p.default_translator.name if p.default_translator else "-"
             dp = p.default_proofreader.name if p.default_proofreader else "-"
             dty = p.default_typesetter.name if p.default_typesetter else "-"
@@ -358,7 +355,6 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     target_ep = msg[1] if len(msg) > 1 else None
 
     # 1. 智能查找项目
-    # FIXED: find_project now prefetches all default staff
     project = await find_project(target_name)
 
     if not project:
@@ -366,7 +362,6 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
     if target_ep:
         # 2. 智能查找话数
-        # FIXED: find_episode now prefetches supervisor
         episode = await find_episode(project, target_ep)
         if not episode:
             await cmd_view.finish(f"找不到话数「{target_ep}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
@@ -396,7 +391,6 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         reply += "\n"
         if project.leader: reply += f"👑 组长: {project.leader.name}\n"
 
-        # FIXED: These attributes will now work because find_project preloaded them
         dt = project.default_translator.name if project.default_translator else "无"
         dp = project.default_proofreader.name if project.default_proofreader else "无"
         dty = project.default_typesetter.name if project.default_typesetter else "无"
