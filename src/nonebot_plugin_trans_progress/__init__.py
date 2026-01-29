@@ -6,6 +6,7 @@ from nonebot.plugin import PluginMetadata
 from tortoise import Tortoise
 from tortoise.queryset import Q
 
+# Ensure these imports exist in your project structure
 from .models import Project, Episode, User
 from .utils import get_default_ddl, send_group_message
 from .web import api_router
@@ -22,7 +23,6 @@ driver = get_driver()
 plugin_config = get_plugin_config(Config)
 
 MODELS_PATH = [f"{__name__}.models"]
-
 
 usage = """@Bot+帮助"""
 
@@ -92,23 +92,32 @@ async def init_web():
     except AttributeError:
         logger.warning("当前驱动器不支持 mount 操作，Web 后台可能无法访问 (请确保使用的是 ASGI 驱动器)")
 
-# === 辅助函数：智能查找项目 ===
+# === 辅助函数：智能查找项目 (FIXED) ===
 async def find_project(keyword: str) -> Project | None:
+    # Defining the relationships we need to load to avoid AttributeError
+    needed_fields = [
+        'leader',
+        'default_translator',
+        'default_proofreader',
+        'default_typesetter',
+        'default_supervisor'
+    ]
+
     # 1. 尝试名字精确匹配
-    p = await Project.get_or_none(name=keyword).prefetch_related('leader')
+    p = await Project.get_or_none(name=keyword).prefetch_related(*needed_fields)
     if p: return p
 
     # 2. 尝试别名匹配 (混合逻辑)
     # 先尝试数据库层面的数组包含 (精确匹配别名中的某一个)
     try:
-        p = await Project.filter(aliases__contains=[keyword]).prefetch_related('leader').first()
+        p = await Project.filter(aliases__contains=[keyword]).prefetch_related(*needed_fields).first()
         if p: return p
     except:
         pass # 忽略 JSON 格式错误
 
     # 3. 兜底：内存遍历 (支持模糊匹配，比如别名"MyGo"，搜"Go"也能找到)
     # 因为项目通常不会成千上万，内存遍历非常快且不易报错
-    all_projs = await Project.all().prefetch_related('leader')
+    all_projs = await Project.all().prefetch_related(*needed_fields)
     for proj in all_projs:
         # 确保 aliases 是列表
         aliases = proj.aliases if isinstance(proj.aliases, list) else []
@@ -118,21 +127,23 @@ async def find_project(keyword: str) -> Project | None:
 
     return None
 
-# === 辅助函数：智能查找话数 ===
+# === 辅助函数：智能查找话数 (FIXED) ===
 async def find_episode(project: Project, keyword: str) -> Episode | None:
     """
     查找话数：
     1. 精确匹配 title
     2. 模糊匹配 title (contains)
     """
+    # Added 'supervisor' to prefetch list
+    needed_fields = ['translator', 'proofreader', 'typesetter', 'supervisor']
+
     # 1. 精确
-    ep = await Episode.get_or_none(project=project, title=keyword).prefetch_related('translator', 'proofreader', 'typesetter')
+    ep = await Episode.get_or_none(project=project, title=keyword).prefetch_related(*needed_fields)
     if ep: return ep
 
     # 2. 模糊 (包含)
     # 例如 DB存的是 "第12话", 用户搜 "12" -> 匹配成功
-    # 可能会匹配到多个 (如搜 "1"，匹配到 "第1话", "第11话")，这里简单起见取第一个，或者可以做更复杂的数字提取
-    eps = await Episode.filter(project=project, title__contains=keyword).prefetch_related('translator', 'proofreader', 'typesetter').all()
+    eps = await Episode.filter(project=project, title__contains=keyword).prefetch_related(*needed_fields).all()
 
     if len(eps) == 1:
         return eps[0]
@@ -314,8 +325,10 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = args.extract_plain_text().strip().split()
 
     if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
+        # FIXED: Added 'default_supervisor' to avoid AttributeError
         projects = await Project.all().prefetch_related(
-            'leader', 'default_translator', 'default_proofreader', 'default_typesetter'
+            'leader', 'default_translator', 'default_proofreader',
+            'default_typesetter', 'default_supervisor'
         )
         if not projects:
             await cmd_view.finish("📭 现在的坑都填完啦？或者是还没开坑？(空空如也)")
@@ -330,11 +343,13 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
             if p.leader: reply += f" | 👑 {p.leader.name}"
 
+            # Safely access name now that prefetch_related is used
             dt = p.default_translator.name if p.default_translator else "-"
             dp = p.default_proofreader.name if p.default_proofreader else "-"
             dty = p.default_typesetter.name if p.default_typesetter else "-"
             ds = p.default_supervisor.name if p.default_supervisor else "-"
-            if dt != "-" or dp != "-" or dty != "-":
+
+            if dt != "-" or dp != "-" or dty != "-" or ds != "-":
                 reply += f"\n   📦 默认: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]"
 
         await cmd_view.finish(reply.strip())
@@ -343,6 +358,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     target_ep = msg[1] if len(msg) > 1 else None
 
     # 1. 智能查找项目
+    # FIXED: find_project now prefetches all default staff
     project = await find_project(target_name)
 
     if not project:
@@ -350,6 +366,7 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
     if target_ep:
         # 2. 智能查找话数
+        # FIXED: find_episode now prefetches supervisor
         episode = await find_episode(project, target_ep)
         if not episode:
             await cmd_view.finish(f"找不到话数「{target_ep}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
@@ -375,10 +392,11 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         active_eps = await Episode.filter(project=project, status__lt=5).order_by('id').all()
 
         reply = f"📊 【{project.name}】"
-        if project.alias: reply += f" ({project.alias})"
+        if project.aliases: reply += f" ({project.aliases})"
         reply += "\n"
         if project.leader: reply += f"👑 组长: {project.leader.name}\n"
 
+        # FIXED: These attributes will now work because find_project preloaded them
         dt = project.default_translator.name if project.default_translator else "无"
         dp = project.default_proofreader.name if project.default_proofreader else "无"
         dty = project.default_typesetter.name if project.default_typesetter else "无"
