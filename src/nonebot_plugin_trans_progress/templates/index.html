@@ -274,7 +274,7 @@
                                 </el-select>
                             </el-col>
                             <el-col :span="12">
-                                <el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期" style="width: 100%" value-format="YYYY-MM-DDTHH:mm:ss"></el-date-picker>
+                                <el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期" style="width: 100%"></el-date-picker>
                             </el-col>
                         </el-row>
                     </div>
@@ -328,7 +328,6 @@
                 const dialogs = reactive({ login: false, project: false, episode: false, sync: false, member: false });
 
                 const filters = reactive({ keyword: '', tag: '', member: '' });
-                // 新增：用于人员筛选的搜索词
                 const memberKeyword = ref('');
 
                 const forms = reactive({
@@ -365,7 +364,12 @@
                 };
 
                 const getGroupName = (gid) => { const group = botGroupsAll.value.find(g => g.group_id === gid); return group ? group.group_name : '未同步'; };
-                const addWeeks = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n * 7); const offset = d.getTimezoneOffset() * 60000; return (new Date(d - offset)).toISOString().slice(0, 19); };
+
+                const addWeeks = (date, n) => {
+                    const d = new Date(date);
+                    d.setDate(d.getDate() + n * 7);
+                    return d;
+                };
 
                 // === Project Logic ===
                 const openCreateProject = () => { forms.project = { id:null, name:'', aliases: [], tags: [], group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
@@ -381,7 +385,25 @@
                 const handleDelProject = async(p) => { if(confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); }};
 
                 // === Episode Logic ===
-                const openAddEpisode = (p) => { currentEditingProjectGroupId.value = p.group_id; const now = new Date(); forms.episode = { id: null, project_name: p.name, title: '', status: 1, translator_qq: p.defaults.trans, proofreader_qq: p.defaults.proof, typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super, ddl_trans: addWeeks(now, 2), ddl_proof: addWeeks(now, 4), ddl_type: addWeeks(now, 6), ddl_supervision: addWeeks(now, 8) }; dialogs.episode = true; };
+                const openAddEpisode = (p) => {
+                    currentEditingProjectGroupId.value = p.group_id;
+                    const now = new Date();
+                    forms.episode = {
+                        id: null,
+                        project_name: p.name,
+                        title: '',
+                        status: 1,
+                        translator_qq: p.defaults.trans,
+                        proofreader_qq: p.defaults.proof,
+                        typesetter_qq: p.defaults.type,
+                        supervisor_qq: p.defaults.super,
+                        ddl_trans: addWeeks(now, 2),
+                        ddl_proof: addWeeks(now, 4),
+                        ddl_type: addWeeks(now, 6),
+                        ddl_supervision: addWeeks(now, 8)
+                    };
+                    dialogs.episode = true;
+                };
                 const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
                 const submitEpisode = async () => { const pl = {...forms.episode}; ['translator_qq','proofreader_qq','typesetter_qq','supervisor_qq'].forEach(k=>{if(!pl[k]) pl[k]=null}); try { if(pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch(e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
@@ -405,14 +427,12 @@
                     return Array.from(s);
                 });
 
-                // 新增：计算所有成员的已有标签
                 const allMemberTags = computed(() => {
                     const s = new Set();
                     members.value.forEach(m => { if(m.tags) m.tags.forEach(t => s.add(t)) });
                     return Array.from(s);
                 });
 
-                // 新增：筛选人员下拉列表 (支持搜 Tags)
                 const filterMemberMethod = (query) => { memberKeyword.value = query; };
                 const memberOptions = computed(() => {
                     const k = memberKeyword.value.toLowerCase();
@@ -424,22 +444,12 @@
                     );
                 });
 
-                // [新增] 用于存储进度弹窗中每个下拉框的搜索关键词
                 const episodeSearchMap = reactive({});
-
-                // [新增] 自定义搜索触发方法
-                const onEpisodeMemberFilter = (query, field) => {
-                    episodeSearchMap[field] = query;
-                };
-
-                // [新增] 获取过滤后的成员列表
+                const onEpisodeMemberFilter = (query, field) => { episodeSearchMap[field] = query; };
                 const getFilteredEpisodeMembers = (field) => {
                     const k = (episodeSearchMap[field] || '').toLowerCase();
-                    const source = currentProjectMembers.value; // 使用当前项目的成员列表
-
-                    if (!k) return source; // 如果没有搜素词，返回全部
-
-                    // 匹配逻辑：名字 OR QQ号 OR 标签
+                    const source = currentProjectMembers.value;
+                    if (!k) return source;
                     return source.filter(m =>
                         m.name.toLowerCase().includes(k) ||
                         m.qq_id.includes(k) ||
