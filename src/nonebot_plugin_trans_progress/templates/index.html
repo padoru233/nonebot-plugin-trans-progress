@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -7,85 +8,313 @@
     <link rel="stylesheet" href="//unpkg.com/element-plus/dist/index.css" />
     <style>
         /* === 全局样式优化 === */
-        :root { --el-font-size-base: 16px !important; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f5f7fa; font-size: 16px; color: #303133; }
-        .header { background: #fff; padding: 0 15px; height: 60px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 100; }
-        .header .title { font-size: 20px; font-weight: 700; display: flex; align-items: center; }
-        .main-container { padding: 15px; max-width: 1400px; width: 95%; margin: 0 auto; }
-        .el-collapse-item__header { font-size: 16px; font-weight: bold; height: auto; padding: 10px 0; }
-        .project-header { display: flex; align-items: center; width: 100%; flex-wrap: wrap; gap: 8px; line-height: 1.4; }
-        .project-info { display: flex; align-items: center; gap: 8px; flex-grow: 1; min-width: 200px; }
-        .stage-box { background: #f9fafc; border: 1px solid #e4e7ed; border-radius: 4px; padding: 6px; margin-bottom: 6px; display: flex; align-items: center; font-size: 14px; }
-        .stage-box.active { background: #f0f9eb; border-color: #e1f3d8; }
-        .stage-box .label { font-weight: bold; width: 2em; margin-right: 8px; color: #606266; }
-        .stage-box.active .label { color: #67c23a; }
-        .stage-box .user { flex-grow: 1; font-weight: 500; }
-        .stage-box .date { font-family: monospace; color: #909399; font-size: 13px; }
-        .stage-box .date.overdue { color: #f56c6c; font-weight: bold; }
-        .task-tag { margin-right: 5px; margin-bottom: 5px; display: inline-block; }
-        @media (max-width: 768px) {
-            .header { padding: 0 10px; }
-            .el-dialog { width: 95% !important; margin-top: 5vh !important; border-radius: 8px !important; }
-            .el-dialog__body { padding: 15px 15px 30px !important; }
-            .el-button { height: 36px; }
-            .el-tag { margin-bottom: 2px; }
+        :root {
+            --el-font-size-base: 16px !important;
         }
-        .status-tag-0 { color: #909399; background: #f4f4f5; border-color: #e9e9eb; }
-        .status-tag-1 { color: #409eff; background: #ecf5ff; border-color: #d9ecff; }
-        .status-tag-2 { color: #e6a23c; background: #fdf6ec; border-color: #faecd8; }
-        .status-tag-3 { color: #67c23a; background: #f0f9eb; border-color: #e1f3d8; }
-        .status-tag-4 { color: #b37feb; background: #f9f0ff; border-color: #e9d8fd; }
-        .status-tag-5 { color: #ffffff; background: #67c23a; border-color: #67c23a; }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f7fa;
+            font-size: 16px;
+            color: #303133;
+        }
+
+        .header {
+            background: #fff;
+            padding: 0 15px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header .title {
+            font-size: 20px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+        }
+
+        .main-container {
+            padding: 15px;
+            max-width: 1400px;
+            width: 95%;
+            margin: 0 auto;
+        }
+
+        .el-collapse-item__header {
+            font-size: 16px;
+            font-weight: bold;
+            height: auto;
+            padding: 10px 0;
+        }
+
+        .project-header {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            flex-wrap: wrap;
+            gap: 8px;
+            line-height: 1.4;
+        }
+
+        .project-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-grow: 1;
+            min-width: 200px;
+        }
+
+        .stage-box {
+            background: #f9fafc;
+            border: 1px solid #e4e7ed;
+            border-radius: 4px;
+            padding: 6px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+        }
+
+        .stage-box.active {
+            background: #f0f9eb;
+            border-color: #e1f3d8;
+        }
+
+        .stage-box .label {
+            font-weight: bold;
+            width: 2em;
+            margin-right: 8px;
+            color: #606266;
+        }
+
+        .stage-box.active .label {
+            color: inherit;
+        }
+
+        /* 特定阶段颜色 (激活状态下) */
+        .stage-box.active.stage-1 {
+            background: #ecf5ff;
+            border-color: #d9ecff;
+            color: #409eff;
+        }
+
+        /* 翻译 - 蓝 */
+        .stage-box.active.stage-2 {
+            background: #fdf6ec;
+            border-color: #faecd8;
+            color: #e6a23c;
+        }
+
+        /* 校对 - 橙 */
+        .stage-box.active.stage-3 {
+            background: #f0f9eb;
+            border-color: #e1f3d8;
+            color: #67c23a;
+        }
+
+        /* 嵌字 - 绿 */
+        .stage-box.active.stage-4 {
+            background: #f9f0ff;
+            border-color: #e9d8fd;
+            color: #b37feb;
+        }
+
+        /* 监修 - 紫 */
+
+        .stage-box.active.stage-1 .label,
+        .stage-box.active.stage-1 .user,
+        .stage-box.active.stage-1 .date {
+            color: #409eff;
+        }
+
+        .stage-box.active.stage-2 .label,
+        .stage-box.active.stage-2 .user,
+        .stage-box.active.stage-2 .date {
+            color: #e6a23c;
+        }
+
+        .stage-box.active.stage-3 .label,
+        .stage-box.active.stage-3 .user,
+        .stage-box.active.stage-3 .date {
+            color: #67c23a;
+        }
+
+        .stage-box.active.stage-4 .label,
+        .stage-box.active.stage-4 .user,
+        .stage-box.active.stage-4 .date {
+            color: #b37feb;
+        }
+
+        .stage-box .date.overdue {
+            color: #f56c6c !important;
+            font-weight: bold;
+        }
+
+        .stage-box .user {
+            flex-grow: 1;
+            font-weight: 500;
+        }
+
+        .stage-box .date {
+            font-family: monospace;
+            color: #909399;
+            font-size: 13px;
+        }
+
+        .stage-box .date.overdue {
+            color: #f56c6c;
+            font-weight: bold;
+        }
+
+        .task-tag {
+            margin-right: 5px;
+            margin-bottom: 5px;
+            display: inline-block;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 0 10px;
+            }
+
+            .el-dialog {
+                width: 95% !important;
+                margin-top: 5vh !important;
+                border-radius: 8px !important;
+            }
+
+            .el-dialog__body {
+                padding: 15px 15px 30px !important;
+            }
+
+            .el-button {
+                height: 36px;
+            }
+
+            .el-tag {
+                margin-bottom: 2px;
+            }
+        }
+
+        .status-tag-0 {
+            color: #909399;
+            background: #f4f4f5;
+            border-color: #e9e9eb;
+        }
+
+        .status-tag-1 {
+            color: #409eff;
+            background: #ecf5ff;
+            border-color: #d9ecff;
+        }
+
+        .status-tag-2 {
+            color: #e6a23c;
+            background: #fdf6ec;
+            border-color: #faecd8;
+        }
+
+        .status-tag-3 {
+            color: #67c23a;
+            background: #f0f9eb;
+            border-color: #e1f3d8;
+        }
+
+        .status-tag-4 {
+            color: #b37feb;
+            background: #f9f0ff;
+            border-color: #e9d8fd;
+        }
+
+        .status-tag-5 {
+            color: #ffffff;
+            background: #67c23a;
+            border-color: #67c23a;
+        }
+
         /* 标签小圆点 */
-        .tag-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+        .tag-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
     </style>
 </head>
+
 <body>
     <div id="app" v-cloak>
         <el-container>
             <el-header class="header">
-                <div class="title"><el-icon style="margin-right: 8px;"><Monitor /></el-icon><span>汉化进度管理</span></div>
+                <div class="title"><el-icon style="margin-right: 8px;">
+                        <Monitor />
+                    </el-icon><span>汉化进度管理</span></div>
                 <div v-if="authorized">
                     <el-button @click="logout" icon="SwitchButton" circle title="退出"></el-button>
-                    <el-button type="primary" @click="fetchData" :loading="loading" icon="Refresh" circle title="刷新"></el-button>
+                    <el-button type="primary" @click="fetchData" :loading="loading" icon="Refresh" circle
+                        title="刷新"></el-button>
                 </div>
             </el-header>
 
             <el-main class="main-container">
-                <el-dialog v-model="dialogs.login" title="身份验证" :show-close="false" :close-on-click-modal="false" width="300px" align-center>
+                <el-dialog v-model="dialogs.login" title="身份验证" :show-close="false" :close-on-click-modal="false"
+                    width="300px" align-center>
                     <p style="color: #606266; margin-bottom: 15px;">请输入配置中的密码以继续访问。</p>
-                    <el-input v-model="authPassword" type="password" placeholder="密码" show-password @keyup.enter="handleLogin" size="large"></el-input>
-                    <template #footer><el-button type="primary" @click="handleLogin" style="width: 100%;" size="large">登 录</el-button></template>
+                    <el-input v-model="authPassword" type="password" placeholder="密码" show-password
+                        @keyup.enter="handleLogin" size="large"></el-input>
+                    <template #footer><el-button type="primary" @click="handleLogin" style="width: 100%;" size="large">登
+                            录</el-button></template>
                 </el-dialog>
 
                 <el-tabs v-model="activeTab" v-if="authorized">
                     <el-tab-pane label="项目列表" name="projects">
-                        <div style="background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ebeef5;">
-                            <el-row :gutter="10">
+                        <div
+                            style="background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ebeef5;">
+                            <el-row :gutter="10" align="middle">
                                 <el-col :span="6" :xs="24" style="margin-bottom:5px">
-                                    <el-input v-model="filters.keyword" placeholder="搜项目名/别名..." prefix-icon="Search" clearable></el-input>
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <el-input v-model="filters.keyword" placeholder="搜项目名/别名..."
+                                            prefix-icon="Search" clearable style="flex-grow: 1;"></el-input>
+                                        <el-checkbox v-model="filters.hideCompleted" label="隐藏完结" size="small"
+                                            style="margin: 0; white-space: nowrap;"></el-checkbox>
+                                    </div>
                                 </el-col>
                                 <el-col :span="6" :xs="12" style="margin-bottom:5px">
-                                    <el-select v-model="filters.tag" placeholder="项目标签" clearable filterable style="width:100%">
-                                        <el-option v-for="t in allProjectTags" :key="t" :label="t" :value="t"></el-option>
-                                    </el-select>
-                                </el-col>
-                                <el-col :span="6" :xs="12" style="margin-bottom:5px">
-                                    <el-select
-                                        v-model="filters.member"
-                                        placeholder="参与人员(搜名/Tag)"
-                                        clearable
-                                        filterable
-                                        :filter-method="filterMemberMethod"
-                                        @visible-change="(v)=>{if(!v)memberKeyword=''}"
+                                    <el-select v-model="filters.tag" placeholder="项目标签" clearable filterable
                                         style="width:100%">
-                                        <el-option v-for="m in memberOptions" :key="m.qq_id" :label="m.name" :value="m.qq_id">
-                                            <span>{{ m.name }}</span>
-                                            <span v-if="m.tags && m.tags.length" style="float: right; color: #909399; font-size: 12px; margin-left: 10px;">
-                                                {{ m.tags.join(' ') }}
-                                            </span>
-                                        </el-option>
+                                        <el-option v-for="t in allProjectTags" :key="t" :label="t"
+                                            :value="t"></el-option>
                                     </el-select>
+                                </el-col>
+                                <el-col :span="6" :xs="12" style="margin-bottom:5px">
+                                    <div style="display: flex; align-items: center; gap: 5px;">
+                                        <el-select v-model="filters.member" placeholder="参与人员(搜名/Tag)" clearable
+                                            filterable :filter-method="filterMemberMethod"
+                                            @visible-change="(v)=>{if(!v)memberKeyword=''}" style="flex-grow: 1;">
+                                            <el-option v-for="m in memberOptions" :key="m.qq_id" :label="m.name"
+                                                :value="m.qq_id">
+                                                <span>{{ m.name }}</span>
+                                                <span v-if="m.tags && m.tags.length"
+                                                    style="float: right; color: #909399; font-size: 12px; margin-left: 10px;">
+                                                    {{ m.tags.join(' ') }}
+                                                </span>
+                                            </el-option>
+                                        </el-select>
+                                        <el-tooltip content="仅显示轮到该成员操作的项目" placement="top" :disabled="!filters.member">
+                                            <el-checkbox v-model="filters.onlyMyTurn" label="仅显当前" size="small"
+                                                :disabled="!filters.member"
+                                                style="margin: 0; white-space: nowrap;"></el-checkbox>
+                                        </el-tooltip>
+                                    </div>
                                 </el-col>
                                 <el-col :span="6" :xs="24" style="text-align: right;">
                                     <el-button type="primary" @click="openCreateProject" icon="Plus">新建项目</el-button>
@@ -93,7 +322,8 @@
                             </el-row>
                         </div>
 
-                        <div v-if="filteredProjects.length === 0" style="text-align: center; color: #909399; margin-top: 40px;">没有找到匹配的项目</div>
+                        <div v-if="filteredProjects.length === 0"
+                            style="text-align: center; color: #909399; margin-top: 40px;">没有找到匹配的项目</div>
 
                         <el-collapse v-model="activeCollapse">
                             <el-collapse-item v-for="p in filteredProjects" :key="p.id" :name="p.name">
@@ -101,37 +331,74 @@
                                     <div class="project-header">
                                         <div class="project-info">
                                             <span>{{ p.name }}</span>
-                                            <el-tag v-for="alias in p.aliases" :key="alias" size="small" type="info" style="margin-right:4px">{{ alias }}</el-tag>
-                                            <el-tag v-for="tag in p.tags" :key="'t-'+tag" size="small" effect="plain" color="#f0f9eb" style="color:#67c23a; border-color:#e1f3d8; margin-right:4px">
+                                            <el-tag v-if="getProjectProgress(p)" effect="dark" size="small"
+                                                :color="getProjectProgressColor(getProjectProgress(p).status)"
+                                                style="border: none; margin-right: 4px;">
+                                                {{ getProjectProgress(p).title }} {{
+                                                ['','翻译','校对','嵌字','监修'][getProjectProgress(p).status] || '' }}
+                                            </el-tag>
+                                            <el-tag v-for="alias in p.aliases" :key="alias" size="small" type="info"
+                                                style="margin-right:4px">{{ alias }}</el-tag>
+                                            <el-tag v-for="tag in p.tags" :key="'t-'+tag" size="small" effect="plain"
+                                                color="#f0f9eb"
+                                                style="color:#67c23a; border-color:#e1f3d8; margin-right:4px">
                                                 <span class="tag-dot" style="background:#67c23a"></span>{{ tag }}
                                             </el-tag>
-                                            <el-tag size="small" effect="plain">{{ (p.group_name && p.group_name !== '未同步') ? (p.group_name + ' (' + p.group_id + ')') : p.group_id }}</el-tag>
+                                            <el-tag size="small" effect="plain">{{ (p.group_name && p.group_name !==
+                                                '未同步') ? (p.group_name + ' (' + p.group_id + ')') : p.group_id
+                                                }}</el-tag>
                                         </div>
                                         <div @click.stop style="margin-right: 10px;">
-                                            <el-button size="small" icon="Edit" circle @click="openEditProject(p)"></el-button>
-                                            <el-button size="small" type="danger" icon="Delete" circle @click="handleDelProject(p)"></el-button>
+                                            <el-button size="small" icon="Edit" circle
+                                                @click="openEditProject(p)"></el-button>
+                                            <el-button size="small" type="danger" icon="Delete" circle
+                                                @click="handleDelProject(p)"></el-button>
                                         </div>
                                     </div>
                                 </template>
                                 <div style="padding: 5px 0;">
-                                    <el-button type="primary" plain size="default" @click="openAddEpisode(p)" style="width: 100%; margin-bottom: 10px;">+ 添加新话</el-button>
-                                    <el-table :data="p.episodes" border style="width: 100%">
+                                    <el-button type="primary" plain size="default" @click="openAddEpisode(p)"
+                                        style="width: 100%; margin-bottom: 10px;">+ 添加新话</el-button>
+                                    <el-table :data="getFilteredEpisodes(p)" border style="width: 100%">
                                         <el-table-column prop="title" label="话数" width="70"></el-table-column>
                                         <el-table-column label="状态" width="75" align="center">
                                             <template #default="{row}">
-                                                <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status" effect="light" size="small">{{ ['未','翻','校','嵌','监','完'][row.status] || row.status }}</el-tag>
+                                                <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status"
+                                                    effect="light" size="small">{{ ['未','翻','校','嵌','监','完'][row.status]
+                                                    || row.status }}</el-tag>
                                             </template>
                                         </el-table-column>
                                         <el-table-column label="进度详情">
                                             <template #default="{row}">
-                                                <div class="stage-box" :class="{active: row.status===1}"><span class="label">翻</span><span class="user">{{ row.translator?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_trans, row.status===1)}">{{ fmtDate(row.ddl_trans) }}</span></div>
-                                                <div class="stage-box" :class="{active: row.status===2}"><span class="label">校</span><span class="user">{{ row.proofreader?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_proof, row.status===2)}">{{ fmtDate(row.ddl_proof) }}</span></div>
-                                                <div class="stage-box" :class="{active: row.status===3}"><span class="label">嵌</span><span class="user">{{ row.typesetter?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_type, row.status===3)}">{{ fmtDate(row.ddl_type) }}</span></div>
-                                                <div class="stage-box" :class="{active: row.status===4}"><span class="label">监</span><span class="user">{{ row.supervisor?.name || '-' }}</span><span class="date" :class="{overdue: isOver(row.ddl_supervision, row.status===4)}">{{ fmtDate(row.ddl_supervision) }}</span></div>
+                                                <div class="stage-box"
+                                                    :class="{active: row.status===1, 'stage-1': row.status===1}"><span
+                                                        class="label">翻</span><span class="user">{{ row.translator?.name
+                                                        || '-' }}</span><span class="date"
+                                                        :class="{overdue: isOver(row.ddl_trans, row.status===1)}">{{
+                                                        fmtDate(row.ddl_trans) }}</span></div>
+                                                <div class="stage-box"
+                                                    :class="{active: row.status===2, 'stage-2': row.status===2}"><span
+                                                        class="label">校</span><span class="user">{{
+                                                        row.proofreader?.name || '-' }}</span><span class="date"
+                                                        :class="{overdue: isOver(row.ddl_proof, row.status===2)}">{{
+                                                        fmtDate(row.ddl_proof) }}</span></div>
+                                                <div class="stage-box"
+                                                    :class="{active: row.status===3, 'stage-3': row.status===3}"><span
+                                                        class="label">嵌</span><span class="user">{{ row.typesetter?.name
+                                                        || '-' }}</span><span class="date"
+                                                        :class="{overdue: isOver(row.ddl_type, row.status===3)}">{{
+                                                        fmtDate(row.ddl_type) }}</span></div>
+                                                <div class="stage-box"
+                                                    :class="{active: row.status===4, 'stage-4': row.status===4}"><span
+                                                        class="label">监</span><span class="user">{{ row.supervisor?.name
+                                                        || '-' }}</span><span class="date"
+                                                        :class="{overdue: isOver(row.ddl_supervision, row.status===4)}">{{
+                                                        fmtDate(row.ddl_supervision) }}</span></div>
                                             </template>
                                         </el-table-column>
                                         <el-table-column width="60" align="center" fixed="right">
-                                            <template #default="{row}"><el-button size="small" icon="Edit" circle @click="openEditEpisode(row, p)"></el-button></template>
+                                            <template #default="{row}"><el-button size="small" icon="Edit" circle
+                                                    @click="openEditEpisode(row, p)"></el-button></template>
                                         </el-table-column>
                                     </el-table>
                                 </div>
@@ -140,27 +407,40 @@
                     </el-tab-pane>
 
                     <el-tab-pane label="播报设置" name="settings">
-                        <el-alert title="仅显示已同步成员的群组。设置每日自动播报时间（默认10:00），或手动点击一键催更。" type="info" show-icon style="margin-bottom: 15px;"></el-alert>
+                        <el-alert title="仅显示已同步成员的群组。设置每日自动播报时间（默认10:00），或手动点击一键催更。" type="info" show-icon
+                            style="margin-bottom: 15px;"></el-alert>
                         <el-table :data="settingsList" border style="width: 100%" v-loading="loading" stripe>
                             <el-table-column prop="group_name" label="群名称" min-width="180">
-                                <template #default="{row}"><div style="font-weight: bold;">{{ row.group_name }}</div><div style="font-size: 12px; color: #909399;">{{ row.group_id }}</div></template>
+                                <template #default="{row}">
+                                    <div style="font-weight: bold;">{{ row.group_name }}</div>
+                                    <div style="font-size: 12px; color: #909399;">{{ row.group_id }}</div>
+                                </template>
                             </el-table-column>
                             <el-table-column label="播报开关" width="100" align="center">
-                                <template #default="{row}"><el-switch v-model="row.enable_broadcast" @change="val => handleSettingChange(row)" active-color="#13ce66" inactive-color="#ff4949"></el-switch></template>
+                                <template #default="{row}"><el-switch v-model="row.enable_broadcast"
+                                        @change="val => handleSettingChange(row)" active-color="#13ce66"
+                                        inactive-color="#ff4949"></el-switch></template>
                             </el-table-column>
                             <el-table-column label="播报时间" width="160" align="center">
-                                <template #default="{row}"><el-time-select v-model="row.broadcast_time" start="00:00" step="00:30" end="23:30" placeholder="选择时间" :clearable="false" @change="val => handleSettingChange(row)" style="width: 120px" :disabled="!row.enable_broadcast"></el-time-select></template>
+                                <template #default="{row}"><el-time-select v-model="row.broadcast_time" start="00:00"
+                                        step="00:30" end="23:30" placeholder="选择时间" :clearable="false"
+                                        @change="val => handleSettingChange(row)" style="width: 120px"
+                                        :disabled="!row.enable_broadcast"></el-time-select></template>
                             </el-table-column>
                             <el-table-column label="操作" width="120" align="center">
-                                <template #default="{row}"><el-button type="primary" size="small" icon="Bell" plain @click="handleRemindNow(row)">一键催更</el-button></template>
+                                <template #default="{row}"><el-button type="primary" size="small" icon="Bell" plain
+                                        @click="handleRemindNow(row)">一键催更</el-button></template>
                             </el-table-column>
                             <el-table-column label="当前进行中任务 (工序: 负责人)" min-width="350">
                                 <template #default="{row}">
-                                    <div v-if="row.tasks.length === 0" style="color: #c0c4cc; font-size: 13px;">无进行中任务</div>
+                                    <div v-if="row.tasks.length === 0" style="color: #c0c4cc; font-size: 13px;">无进行中任务
+                                    </div>
                                     <div v-else>
-                                        <el-tag v-for="(t, index) in row.tasks" :key="t.project_name+t.title+t.status" class="task-tag" effect="light"
+                                        <el-tag v-for="(t, index) in row.tasks" :key="t.project_name+t.title+t.status"
+                                            class="task-tag" effect="light"
                                             :type="t.is_overdue ? 'danger' : (t.status === 1 ? '' : (t.status === 2 ? 'warning' : 'success'))">
-                                            <span v-if="t.is_overdue" style="font-weight:bold; margin-right:2px">❌</span>
+                                            <span v-if="t.is_overdue"
+                                                style="font-weight:bold; margin-right:2px">❌</span>
                                             <b>[{{ t.project_name }} {{ t.title }}]</b> {{ t.stage }}: {{ t.user }}
                                         </el-tag>
                                     </div>
@@ -172,28 +452,35 @@
                     <el-tab-pane label="成员管理" name="members">
                         <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
                             <el-button type="success" icon="Refresh" @click="dialogs.sync = true">同步群成员</el-button>
-                            <el-input v-model="memberSearch" placeholder="搜索成员/标签..." prefix-icon="Search" clearable style="width: 200px"></el-input>
+                            <el-input v-model="memberSearch" placeholder="搜索成员/标签..." prefix-icon="Search" clearable
+                                style="width: 200px"></el-input>
                             <el-select v-model="filterGroup" placeholder="按群组筛选" clearable style="width: 200px">
-                                <el-option v-for="g in botGroupsDB" :key="g.group_id" :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
+                                <el-option v-for="g in botGroupsDB" :key="g.group_id"
+                                    :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
                             </el-select>
                         </div>
                         <el-table :data="filteredMembers" border height="600" style="width: 100%" v-loading="loading">
                             <el-table-column prop="group_id" label="所属群组" min-width="140" sortable>
-                                <template #default="{row}"><div style="font-weight: 500;">{{ getGroupName(row.group_id) }}</div><div style="font-size: 12px; color: #909399;">{{ row.group_id }}</div></template>
+                                <template #default="{row}">
+                                    <div style="font-weight: 500;">{{ getGroupName(row.group_id) }}</div>
+                                    <div style="font-size: 12px; color: #909399;">{{ row.group_id }}</div>
+                                </template>
                             </el-table-column>
                             <el-table-column prop="name" label="成员信息" min-width="180">
                                 <template #default="{row}">
                                     <div style="font-weight: 600; font-size: 15px;">{{ row.name }}</div>
                                     <div style="font-size: 12px; color: #909399;">{{ row.qq_id }}</div>
                                     <div style="margin-top:4px" v-if="row.tags && row.tags.length">
-                                        <el-tag v-for="tag in row.tags" :key="tag" size="small" type="warning" style="margin-right:4px">{{ tag }}</el-tag>
+                                        <el-tag v-for="tag in row.tags" :key="tag" size="small" type="warning"
+                                            style="margin-right:4px">{{ tag }}</el-tag>
                                     </div>
                                 </template>
                             </el-table-column>
                             <el-table-column label="操作" width="100" align="center">
                                 <template #default="{row}">
                                     <el-button size="small" icon="Edit" @click="openEditMember(row)"></el-button>
-                                    <el-button size="small" type="danger" icon="Delete" @click="handleDelMember(row)"></el-button>
+                                    <el-button size="small" type="danger" icon="Delete"
+                                        @click="handleDelMember(row)"></el-button>
                                 </template>
                             </el-table-column>
                         </el-table>
@@ -203,39 +490,56 @@
 
             <el-dialog v-model="dialogs.project" :title="forms.project.id ? '编辑项目' : '新建项目'" width="500px">
                 <el-form :model="forms.project" label-width="70px" size="large">
-                    <el-form-item label="名称"><el-input v-model="forms.project.name" placeholder="项目名称"></el-input></el-form-item>
+                    <el-form-item label="名称"><el-input v-model="forms.project.name"
+                            placeholder="项目名称"></el-input></el-form-item>
                     <el-form-item label="别名">
-                        <el-select v-model="forms.project.aliases" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="回车添加" style="width: 100%"></el-select>
+                        <el-select v-model="forms.project.aliases" multiple filterable allow-create default-first-option
+                            :reserve-keyword="false" placeholder="回车添加" style="width: 100%"></el-select>
                     </el-form-item>
                     <el-form-item label="标签">
-                        <el-select v-model="forms.project.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="回车添加或选择现有" style="width: 100%">
+                        <el-select v-model="forms.project.tags" multiple filterable allow-create default-first-option
+                            :reserve-keyword="false" placeholder="回车添加或选择现有" style="width: 100%">
                             <el-option v-for="tag in allProjectTags" :key="tag" :label="tag" :value="tag"></el-option>
                         </el-select>
                     </el-form-item>
                     <el-form-item label="绑定群" v-if="!forms.project.id">
-                        <el-select v-model="forms.project.group_id" placeholder="选择已同步成员的群" filterable style="width: 100%">
-                            <el-option v-for="g in botGroupsDB" :key="g.group_id" :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
+                        <el-select v-model="forms.project.group_id" placeholder="选择已同步成员的群" filterable
+                            style="width: 100%">
+                            <el-option v-for="g in botGroupsDB" :key="g.group_id"
+                                :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
                         </el-select>
                     </el-form-item>
                     <el-form-item label="负责人">
-                        <el-select v-model="forms.project.leader_qq" placeholder="默认群主" clearable filterable style="width: 100%">
-                            <el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id"></el-option>
+                        <el-select v-model="forms.project.leader_qq" placeholder="默认群主" clearable filterable
+                            style="width: 100%">
+                            <el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id"
+                                :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id"></el-option>
                         </el-select>
                     </el-form-item>
                     <el-divider content-position="left">默认人员配置</el-divider>
                     <el-row :gutter="10">
-                        <el-col :span="12"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
-                        <el-col :span="12"><el-select v-model="forms.project.default_proofreader_qq" placeholder="默认校对" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
-                        <el-col :span="12"><el-select v-model="forms.project.default_typesetter_qq" placeholder="默认嵌字" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
-                        <el-col :span="12"><el-select v-model="forms.project.default_supervisor_qq" placeholder="默认监修" clearable filterable><el-option v-for="m in computedProjectMembersForEdit" :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译"
+                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
+                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_proofreader_qq" placeholder="默认校对"
+                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
+                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_typesetter_qq" placeholder="默认嵌字"
+                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
+                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                        <el-col :span="12"><el-select v-model="forms.project.default_supervisor_qq" placeholder="默认监修"
+                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
+                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
                     </el-row>
                 </el-form>
-                <template #footer><el-button type="primary" size="large" @click="submitProject" style="width: 100%">保存</el-button></template>
+                <template #footer><el-button type="primary" size="large" @click="submitProject"
+                        style="width: 100%">保存</el-button></template>
             </el-dialog>
 
             <el-dialog v-model="dialogs.episode" :title="forms.episode.id ? '编辑进度' : '新建话数'" width="600px">
                 <el-form :model="forms.episode" label-width="50px" size="large">
-                    <el-form-item label="标题"><el-input v-model="forms.episode.title" placeholder="输入标题"></el-input></el-form-item>
+                    <el-form-item label="标题"><el-input v-model="forms.episode.title"
+                            placeholder="输入标题"></el-input></el-form-item>
 
                     <el-form-item label="状态" v-if="forms.episode.id">
                         <el-radio-group v-model="forms.episode.status">
@@ -251,55 +555,56 @@
                         <div style="font-weight: bold; margin: 10px 0 5px; color: #606266;">{{ stage.label }}阶段</div>
                         <el-row :gutter="10">
                             <el-col :span="12">
-                                <el-select
-                                    v-model="forms.episode[stage.userField]"
-                                    :placeholder="stage.label + '人员'"
-                                    clearable
-                                    filterable
+                                <el-select v-model="forms.episode[stage.userField]" :placeholder="stage.label + '人员'"
+                                    clearable filterable
                                     :filter-method="(q) => onEpisodeMemberFilter(q, stage.userField)"
                                     @visible-change="(v) => !v && onEpisodeMemberFilter('', stage.userField)"
                                     style="width: 100%">
 
-                                    <el-option
-                                        v-for="m in getFilteredEpisodeMembers(stage.userField)"
-                                        :key="m.qq_id"
-                                        :label="m.name + ' (' + m.qq_id + ')'"
-                                        :value="m.qq_id">
+                                    <el-option v-for="m in getFilteredEpisodeMembers(stage.userField)" :key="m.qq_id"
+                                        :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id">
 
                                         <span style="float: left">{{ m.name }}</span>
-                                        <span v-if="m.tags && m.tags.length" style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                        <span v-if="m.tags && m.tags.length"
+                                            style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
                                             {{ m.tags.join(' ') }}
                                         </span>
                                     </el-option>
                                 </el-select>
                             </el-col>
                             <el-col :span="12">
-                                <el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期" style="width: 100%"></el-date-picker>
+                                <el-date-picker v-model="forms.episode[stage.dateField]" type="date" placeholder="截止日期"
+                                    style="width: 100%"></el-date-picker>
                             </el-col>
                         </el-row>
                     </div>
                 </el-form>
-                <template #footer><el-button type="primary" size="large" @click="submitEpisode" style="width: 100%">保存</el-button></template>
+                <template #footer><el-button type="primary" size="large" @click="submitEpisode"
+                        style="width: 100%">保存</el-button></template>
             </el-dialog>
 
             <el-dialog v-model="dialogs.member" title="修改成员信息" width="400px">
                 <el-form size="large">
                     <el-form-item label="昵称"><el-input v-model="forms.member.name"></el-input></el-form-item>
                     <el-form-item label="标签">
-                        <el-select v-model="forms.member.tags" multiple filterable allow-create default-first-option :reserve-keyword="false" placeholder="输入标签回车或选择" style="width: 100%">
+                        <el-select v-model="forms.member.tags" multiple filterable allow-create default-first-option
+                            :reserve-keyword="false" placeholder="输入标签回车或选择" style="width: 100%">
                             <el-option v-for="tag in allMemberTags" :key="tag" :label="tag" :value="tag"></el-option>
                         </el-select>
                     </el-form-item>
                 </el-form>
-                <template #footer><el-button type="primary" size="large" @click="submitMember" style="width: 100%">保存</el-button></template>
+                <template #footer><el-button type="primary" size="large" @click="submitMember"
+                        style="width: 100%">保存</el-button></template>
             </el-dialog>
 
             <el-dialog v-model="dialogs.sync" title="同步群成员" width="320px">
                 <el-alert title="选择Bot所在的群以抓取成员" type="info" :closable="false" style="margin-bottom: 10px;"></el-alert>
                 <el-select v-model="forms.sync_group" placeholder="选择或搜索群号" filterable style="width: 100%" size="large">
-                    <el-option v-for="g in botGroupsAll" :key="g.group_id" :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
+                    <el-option v-for="g in botGroupsAll" :key="g.group_id"
+                        :label="g.group_name + ' (' + g.group_id + ')'" :value="g.group_id"></el-option>
                 </el-select>
-                <template #footer><el-button type="primary" size="large" @click="submitSync" style="width: 100%">开始同步</el-button></template>
+                <template #footer><el-button type="primary" size="large" @click="submitSync"
+                        style="width: 100%">开始同步</el-button></template>
             </el-dialog>
         </el-container>
     </div>
@@ -313,7 +618,7 @@
     <script>
         const { createApp, ref, reactive, computed, onMounted } = Vue;
         const app = createApp({
-             setup() {
+            setup() {
                 const API = '/trans';
                 const loading = ref(false);
                 const authorized = ref(false);
@@ -327,7 +632,7 @@
                 const activeCollapse = ref([]);
                 const dialogs = reactive({ login: false, project: false, episode: false, sync: false, member: false });
 
-                const filters = reactive({ keyword: '', tag: '', member: '' });
+                const filters = reactive({ keyword: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false });
                 const memberKeyword = ref('');
 
                 const forms = reactive({
@@ -372,17 +677,17 @@
                 };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id:null, name:'', aliases: [], tags: [], group_id:'', leader_qq:'', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
+                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], group_id: '', leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
-                    forms.project = { id:p.id, name:p.name, aliases: p.aliases || [], tags: p.tags || [], group_id:p.group_id, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
+                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], group_id: p.group_id, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
-                    const pl = {...forms.project}; Object.keys(pl).forEach(k => { if(!pl[k] && k!='id' && k!='aliases' && k!='tags') delete pl[k] });
-                    try { if(pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch(e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
+                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags') delete pl[k] });
+                    try { if (pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
                 };
-                const handleDelProject = async(p) => { if(confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); }};
+                const handleDelProject = async (p) => { if (confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); } };
 
                 // === Episode Logic ===
                 const openAddEpisode = (p) => {
@@ -405,17 +710,17 @@
                     dialogs.episode = true;
                 };
                 const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
-                const submitEpisode = async () => { const pl = {...forms.episode}; ['translator_qq','proofreader_qq','typesetter_qq','supervisor_qq'].forEach(k=>{if(!pl[k]) pl[k]=null}); try { if(pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch(e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
+                const submitEpisode = async () => { const pl = { ...forms.episode };['translator_qq', 'proofreader_qq', 'typesetter_qq', 'supervisor_qq'].forEach(k => { if (!pl[k]) pl[k] = null }); try { if (pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
                 // === Member Logic ===
-                const submitSync = async() => { loading.value = true; try { await axios.post(`${API}/group/sync_members`, {group_id: forms.sync_group}); dialogs.sync=false; fetchData(); ElementPlus.ElMessage.success('同步成功'); } catch(e) { ElementPlus.ElMessage.error('同步失败'); } finally { loading.value = false; } };
-                const openEditMember = (r) => { forms.member={...r, tags: r.tags || []}; dialogs.member=true; };
-                const submitMember = async() => { await axios.put(`${API}/member/${forms.member.id}`, {name:forms.member.name, tags: forms.member.tags}); dialogs.member=false; fetchData(); };
-                const handleDelMember = async(r) => { if(confirm('删?')) { await axios.delete(`${API}/member/${r.id}`); fetchData(); }};
+                const submitSync = async () => { loading.value = true; try { await axios.post(`${API}/group/sync_members`, { group_id: forms.sync_group }); dialogs.sync = false; fetchData(); ElementPlus.ElMessage.success('同步成功'); } catch (e) { ElementPlus.ElMessage.error('同步失败'); } finally { loading.value = false; } };
+                const openEditMember = (r) => { forms.member = { ...r, tags: r.tags || [] }; dialogs.member = true; };
+                const submitMember = async () => { await axios.put(`${API}/member/${forms.member.id}`, { name: forms.member.name, tags: forms.member.tags }); dialogs.member = false; fetchData(); };
+                const handleDelMember = async (r) => { if (confirm('删?')) { await axios.delete(`${API}/member/${r.id}`); fetchData(); } };
 
                 // === Settings Logic ===
-                const handleSettingChange = async (row) => { try { await axios.post(`${API}/settings/update`, { group_id: row.group_id, enable: row.enable_broadcast, time: row.broadcast_time }); ElementPlus.ElMessage.success('设置已保存'); } catch(e) { ElementPlus.ElMessage.error('保存失败'); } };
-                const handleRemindNow = async (row) => { if(!confirm(`确定催更【${row.group_name}】?`)) return; try { await axios.post(`${API}/settings/remind_now`, { group_id: row.group_id }); ElementPlus.ElMessage.success('已发送'); } catch(e) { ElementPlus.ElMessage.error('发送失败'); } };
+                const handleSettingChange = async (row) => { try { await axios.post(`${API}/settings/update`, { group_id: row.group_id, enable: row.enable_broadcast, time: row.broadcast_time }); ElementPlus.ElMessage.success('设置已保存'); } catch (e) { ElementPlus.ElMessage.error('保存失败'); } };
+                const handleRemindNow = async (row) => { if (!confirm(`确定催更【${row.group_name}】?`)) return; try { await axios.post(`${API}/settings/remind_now`, { group_id: row.group_id }); ElementPlus.ElMessage.success('已发送'); } catch (e) { ElementPlus.ElMessage.error('发送失败'); } };
 
                 // === Filtering & Computed ===
                 const computedProjectMembersForEdit = computed(() => { const gid = forms.project.id ? currentEditingProjectGroupId.value : forms.project.group_id; return gid ? members.value.filter(m => m.group_id == gid) : []; });
@@ -423,20 +728,20 @@
 
                 const allProjectTags = computed(() => {
                     const s = new Set();
-                    projects.value.forEach(p => { if(p.tags) p.tags.forEach(t => s.add(t)) });
+                    projects.value.forEach(p => { if (p.tags) p.tags.forEach(t => s.add(t)) });
                     return Array.from(s);
                 });
 
                 const allMemberTags = computed(() => {
                     const s = new Set();
-                    members.value.forEach(m => { if(m.tags) m.tags.forEach(t => s.add(t)) });
+                    members.value.forEach(m => { if (m.tags) m.tags.forEach(t => s.add(t)) });
                     return Array.from(s);
                 });
 
                 const filterMemberMethod = (query) => { memberKeyword.value = query; };
                 const memberOptions = computed(() => {
                     const k = memberKeyword.value.toLowerCase();
-                    if(!k) return members.value;
+                    if (!k) return members.value;
                     return members.value.filter(m =>
                         m.name.toLowerCase().includes(k) ||
                         m.qq_id.includes(k) ||
@@ -462,17 +767,102 @@
                         const k = filters.keyword.toLowerCase();
                         const matchKw = !k || p.name.toLowerCase().includes(k) || (p.aliases && p.aliases.some(a => a.toLowerCase().includes(k)));
                         const matchTag = !filters.tag || (p.tags && p.tags.includes(filters.tag));
+
                         let matchMem = true;
+                        // 这里我们只做初步的项目级筛选，更细粒度的控制在 getFilteredEpisodes 中处理
+                        // 如果选了成员，至少该成员要在这个项目中（即使不是当前回合），才显示项目框
+                        // 但如果是 'onlyMyTurn'，那么必须该项目下至少有一话是轮到他的，才显示项目
                         if (filters.member) {
                             const qq = filters.member;
                             const isLeader = p.leader?.qq_id === qq;
-                            const isDef = p.defaults.trans === qq || p.defaults.proof === qq || p.defaults.type === qq || p.defaults.super === qq ;
+                            const isDef = p.defaults.trans === qq || p.defaults.proof === qq || p.defaults.type === qq || p.defaults.super === qq;
                             const isInEp = p.episodes.some(e => e.translator?.qq_id === qq || e.proofreader?.qq_id === qq || e.typesetter?.qq_id === qq || e.supervisor?.qq_id === qq);
-                            matchMem = isLeader || isDef || isInEp;
+
+                            if (filters.onlyMyTurn) {
+                                // 必须有一话轮到他
+                                const hasActiveEp = p.episodes.some(e => {
+                                    if (e.status === 5) return false; // 完结的不算
+                                    if (filters.hideCompleted && e.status === 5) return false;
+                                    if (e.status === 1 && e.translator?.qq_id === qq) return true;
+                                    if (e.status === 2 && e.proofreader?.qq_id === qq) return true;
+                                    if (e.status === 3 && e.typesetter?.qq_id === qq) return true;
+                                    if (e.status === 4 && e.supervisor?.qq_id === qq) return true;
+                                    return false;
+                                });
+                                matchMem = hasActiveEp;
+                            } else {
+                                matchMem = isLeader || isDef || isInEp;
+                            }
                         }
+
+                        // 如果开启了隐藏完结，且项目所有话都完结了（或者没有话），是否隐藏整个项目？
+                        // 需求通常是：隐藏完结的话。如果项目里只剩完结的话，那项目也应该看起来是空的或者被过滤。
+                        // 这里我们先保留项目，如果 filteredEpisodes 为空，用户看到空壳。
+                        // 或者我们可以优化一下：如果过滤后的 episodes 为空，且没有任何未开始的话，可以隐藏。
+                        // 简单起见，这里主要依赖 matchKw/Tag/Mem。
+
+                        // 优化：如果开启隐藏完结，且该项目下没有任何未完结的话（或根本没有话），则直接隐藏该项目
+                        if (filters.hideCompleted) {
+                            const hasActive = p.episodes.some(e => e.status !== 5);
+                            if (!hasActive) return false;
+                        }
+
                         return matchKw && matchTag && matchMem;
                     });
                 });
+
+                const getFilteredEpisodes = (p) => {
+                    let result = p.episodes.filter(e => {
+                        if (filters.hideCompleted && e.status === 5) return false;
+                        if (filters.member && filters.onlyMyTurn) {
+                            const qq = filters.member;
+                            if (e.status === 1 && e.translator?.qq_id !== qq) return false;
+                            if (e.status === 2 && e.proofreader?.qq_id !== qq) return false;
+                            if (e.status === 3 && e.typesetter?.qq_id !== qq) return false;
+                            if (e.status === 4 && e.supervisor?.qq_id !== qq) return false;
+                            if (e.status === 5 || e.status === 0) return false;
+                        }
+                        return true;
+                    });
+
+                    // 按话数(Title) 降序排序 (最新的在最前)
+                    // 使用 localeCompare + numeric: true， b compare a 即可降序
+                    if (result.length > 0) {
+                        // 为了不改变 reactiveness 这里的 filter 返回的是新数组，直接 sort 没问题
+                        result.sort((a, b) => {
+                            return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
+                        });
+                    }
+                    return result;
+                };
+
+                const getProjectProgress = (p) => {
+                    // 找到未完结中，数字最小的（这里假设id或者话数排序是期望的顺序，episodes通常按id排序，或者我们在后端按id排了）
+                    // 题目要求：去掉完结的话数后显示数字最小的那个
+                    // 我们可以尝试解析 title 中的数字，或者简单地取第一个未完结的
+                    const activeEps = p.episodes.filter(e => e.status !== 5);
+                    if (activeEps.length === 0) return null;
+
+                    // 按标题数字/自然顺序排序，确保取出的是“最小”的那个
+                    // 复制一份数组避免影响原数组顺序（虽然 filter 已经是新数组了，但 deep check 没坏处）
+                    // 使用 localeCompare + numeric: true 来处理 "1", "2", "10" 这种顺序
+                    activeEps.sort((a, b) => {
+                        return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+                    });
+
+                    return activeEps[0];
+                };
+
+                const getProjectProgressColor = (status) => {
+                    // 蓝色是翻橙色是校绿色是嵌紫色是监修
+                    switch (status) {
+                        case 1: return '#409eff'; // 翻
+                        case 2: return '#e6a23c'; // 校
+                        case 3: return '#67c23a'; // 嵌
+                        case 4: return '#b37feb'; // 监
+                        default: return '#909399';
+                    }
+                };
 
                 const filteredMembers = computed(() => {
                     return members.value.filter(m => {
@@ -498,13 +888,15 @@
                     computedProjectMembersForEdit, currentProjectMembers,
                     episodeSearchMap, onEpisodeMemberFilter, getFilteredEpisodeMembers,
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
-                    memberSearch, filterGroup, getGroupName, fmtDate, isOver
+                    memberSearch, filterGroup, getGroupName, fmtDate, isOver,
+                    getFilteredEpisodes, getProjectProgress, getProjectProgressColor
                 };
-             }
+            }
         });
         for (const [k, v] of Object.entries(ElementPlusIconsVue)) app.component(k, v);
         app.use(ElementPlus, { locale: ElementPlusLocaleZhCn });
         app.mount('#app');
     </script>
 </body>
+
 </html>
