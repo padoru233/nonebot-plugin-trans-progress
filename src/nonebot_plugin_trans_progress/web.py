@@ -193,13 +193,11 @@ async def find_bot_for_group(group_id: str) -> Optional[Bot]:
             continue
     return None
 
-async def ensure_project_for_group(name: str, group_id: str, broadcast: bool = True):
+async def ensure_project_for_group(name: str, group_id: str):
     """
-    确保群内存在对应名称的项目（项目集），不存在则创建。
-    :param broadcast: 是否在新建项目时播报"新坑开张"消息。
-        - 由 /project/ensure 显式创建项目集时应播报（broadcast=True）
-        - 由 /episode/ensure 隐式兜底创建（同步遗留/未绑定的项目集）时不应重复播报（broadcast=False），
-          避免"每次新建话数都多播报一条新建项目集"的问题
+    确保群内存在对应名称的项目（项目集），不存在则创建（并播报"新坑开张"）。
+    只有当同名项目在 bot 侧确实是第一次出现时才会创建+播报，
+    已存在的项目会直接复用，不会重复创建或播报。
     """
     projects = await find_projects_by_name_or_alias(name)
     if len(projects) > 1:
@@ -224,10 +222,9 @@ async def ensure_project_for_group(name: str, group_id: str, broadcast: bool = T
         group_id=group_id,
         group_name=group_info.get("group_name", "未同步"),
     )
-    if broadcast:
-        await send_group_message(
-            int(group_id), Message(f"🔨 挖到新坑啦！新坑开张：{project.name}\n✨ 大家加油！")
-        )
+    await send_group_message(
+        int(group_id), Message(f"🔨 挖到新坑啦！新坑开张：{project.name}\n✨ 大家加油！")
+    )
     return project, True
 
 def ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
@@ -477,11 +474,11 @@ async def delete_project(id: int):
 @api_router.post("/episode/ensure")
 async def ensure_episode(form: EpisodeEnsure):
     group_id = str(form.group_id)
-    # broadcast=False: 项目集应通过 /project/ensure 显式同步并播报，
-    # 这里只做兜底创建（同步遗留/未绑定的项目集），避免每次新建话数都多播报一条"新坑开张"
-    project, project_created = await ensure_project_for_group(
-        form.project_name, group_id, broadcast=False
-    )
+    # 项目集若在 bot 侧确实是第一次出现（比如萌翻已有项目集刚同步/还未通过
+    # /project/ensure 单独同步过），这里兜底创建时也要正常播报"新坑开张"，
+    # 否则会出现"bot 创建了项目但完全没播报"的情况。
+    # 重复播报问题应通过让萌翻侧对已有项目集做一次性同步来解决，而不是在这里吞掉播报。
+    project, project_created = await ensure_project_for_group(form.project_name, group_id)
     episode = await Episode.get_or_none(project=project, title=form.title)
     if episode:
         return {
