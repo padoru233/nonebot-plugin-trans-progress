@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
+import unicodedata
 
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from nonebot.adapters.onebot.v11 import Message, MessageSegment, Bot
 
 from .models import Project, Episode, User, GroupSetting
 from .utils import get_default_ddl, send_group_message
+from .workflow import complete_episode
 from .config import Config
 from .broadcast import check_and_send_broadcast
 
@@ -84,23 +86,141 @@ class SettingUpdate(BaseModel):
 class RemindNow(BaseModel):
     group_id: str
 
+class EpisodeCompletion(BaseModel):
+    project_name: str
+    episode_title: str
+    user_name: str
+    role: str
+
+class ManualEpisodeCompletion(BaseModel):
+    project_name: str
+    episode_title: str
+
+class MemberSynchronization(BaseModel):
+    project_name: str
+    episode_title: str
+    user_name: str
+    role: str
+    action: str
+
+class ProjectEnsure(BaseModel):
+    name: str
+    group_id: str
+
+class EpisodeEnsure(BaseModel):
+    project_name: str
+    title: str
+    group_id: str
+
 # --- Helpers ---
 async def get_db_user(qq, group_id):
     if not qq: return None
     return await User.get_or_none(qq_id=str(qq), group_id=str(group_id))
 
+def normalize_project_identifier(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).strip().casefold()
+
+async def find_projects_by_name_or_alias(identifier: str) -> List[Project]:
+    projects = await Project.all()
+    normalized_identifier = normalize_project_identifier(identifier)
+    name_matches = [
+        project
+        for project in projects
+        if normalize_project_identifier(project.name) == normalized_identifier
+    ]
+    if name_matches:
+        return name_matches
+    return [
+        project
+        for project in projects
+        if any(
+            normalize_project_identifier(alias) == normalized_identifier
+            for alias in project.aliases
+        )
+    ]
+
+async def find_episodes_by_title(identifier: str) -> List[Episode]:
+    normalized_identifier = normalize_project_identifier(identifier)
+    episodes = await Episode.all().prefetch_related("project")
+    return [
+        episode
+        for episode in episodes
+        if normalize_project_identifier(episode.title) == normalized_identifier
+    ]
+
+async def find_or_create_group_user(project: Project, user_name: str) -> User:
+    group_id = str(project.group_id)
+    users = await User.filter(group_id=group_id, name=user_name).all()
+    if len(users) == 1:
+        return users[0]
+    if len(users) > 1:
+        raise HTTPException(409, "群内匹配到多个同名成员")
+
+    bot = await find_bot_for_group(group_id)
+    if not bot:
+        raise HTTPException(404, "Bot 未加入项目所属群，无法同步成员")
+    members = await bot.get_group_member_list(group_id=int(group_id))
+    matched_members = [
+        member
+        for member in members
+        if user_name in {member.get("card"), member.get("nickname")}
+    ]
+    if not matched_members:
+        raise HTTPException(404, "项目所属群内未找到同名成员")
+    if len(matched_members) > 1:
+        raise HTTPException(409, "项目所属群内匹配到多个同名成员")
+
+    member = matched_members[0]
+    qq_id = str(member["user_id"])
+    user = await get_db_user(qq_id, group_id)
+    if user:
+        user.name = user_name
+        await user.save()
+        return user
+    return await User.create(qq_id=qq_id, group_id=group_id, name=user_name)
+
+def get_online_bots() -> List[Bot]:
+    return [bot for bot in get_bots().values() if isinstance(bot, Bot)]
+
 async def find_bot_for_group(group_id: str) -> Optional[Bot]:
     """遍历所有 Bot，找到在该群内的一个 Bot"""
-    all_bots = get_bots()
-    for bot in all_bots.values():
-        if isinstance(bot, Bot):
-            try:
-                g_list = await bot.get_group_list()
-                if any(str(g['group_id']) == str(group_id) for g in g_list):
-                    return bot
-            except Exception:
-                continue
+    for bot in get_online_bots():
+        try:
+            g_list = await bot.get_group_list()
+            if any(str(g['group_id']) == str(group_id) for g in g_list):
+                return bot
+        except Exception:
+            continue
     return None
+
+async def ensure_project_for_group(name: str, group_id: str):
+    projects = await find_projects_by_name_or_alias(name)
+    if len(projects) > 1:
+        raise HTTPException(409, "匹配到多个项目，无法确认要同步的项目")
+    if projects:
+        if str(projects[0].group_id) != str(group_id):
+            raise HTTPException(409, "同名项目已绑定到其他 QQ 群")
+        return projects[0], False
+
+    if not get_online_bots():
+        raise HTTPException(503, "没有在线的 OneBot V11 机器人，无法创建项目")
+    bot = await find_bot_for_group(group_id)
+    if not bot:
+        raise HTTPException(404, "Bot 未加入配置的 QQ 群，无法创建项目")
+    try:
+        group_info = await bot.get_group_info(group_id=int(group_id))
+    except Exception as exc:
+        raise HTTPException(502, f"无法读取配置的 QQ 群信息: {exc}")
+
+    project = await Project.create(
+        name=name,
+        group_id=group_id,
+        group_name=group_info.get("group_name", "未同步"),
+    )
+    await send_group_message(
+        int(group_id), Message(f"🔨 挖到新坑啦！新坑开张：{project.name}\n✨ 大家加油！")
+    )
+    return project, True
 
 def ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
     """确保 datetime 对象有时区信息，如果没有则添加本地时区"""
@@ -115,6 +235,29 @@ def ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 # --- Routes ---
+
+@api_router.get("/health")
+async def get_bot_health():
+    bots = []
+    for bot in get_online_bots():
+        try:
+            groups = await bot.get_group_list()
+            bots.append({
+                "self_id": str(bot.self_id),
+                "connected": True,
+                "group_count": len(groups),
+            })
+        except Exception as exc:
+            bots.append({
+                "self_id": str(bot.self_id),
+                "connected": False,
+                "error": str(exc),
+            })
+    return {
+        "status": "ok" if bots else "offline",
+        "bot_count": len(bots),
+        "bots": bots,
+    }
 
 @api_router.get("/groups/all")
 async def get_all_bot_groups():
@@ -292,6 +435,12 @@ async def create_project(proj: ProjectCreate):
     await send_group_message(int(gid), msg)
     return {"status": "success"}
 
+@api_router.post("/project/ensure")
+async def ensure_project(form: ProjectEnsure):
+    group_id = str(form.group_id)
+    project, created = await ensure_project_for_group(form.name, group_id)
+    return {"status": "success", "created": created, "project_id": project.id}
+
 @api_router.put("/project/{id}")
 async def update_project(id: int, form: ProjectUpdate):
     p = await Project.get_or_none(id=id)
@@ -317,10 +466,39 @@ async def delete_project(id: int):
     await p.delete()
     return {"status": "success"}
 
+@api_router.post("/episode/ensure")
+async def ensure_episode(form: EpisodeEnsure):
+    group_id = str(form.group_id)
+    project, project_created = await ensure_project_for_group(form.project_name, group_id)
+    episode = await Episode.get_or_none(project=project, title=form.title)
+    if episode:
+        return {
+            "status": "success",
+            "created": False,
+            "project_created": project_created,
+            "episode_id": episode.id,
+        }
+
+    episode = await Episode.create(project=project, title=form.title, status=1)
+    await send_group_message(
+        int(group_id),
+        Message(f"📦 掉落新任务：{project.name} {episode.title}\n✍️ 翻译未分锅"),
+    )
+    return {
+        "status": "success",
+        "created": True,
+        "project_created": project_created,
+        "episode_id": episode.id,
+    }
+
 @api_router.post("/episode/add")
 async def add_episode(ep: EpisodeCreate):
-    project = await Project.get_or_none(name=ep.project_name)
-    if not project: raise HTTPException(404, "项目不存在")
+    projects = await find_projects_by_name_or_alias(ep.project_name)
+    if not projects:
+        raise HTTPException(404, "未找到匹配的项目或别名")
+    if len(projects) > 1:
+        raise HTTPException(409, "匹配到多个项目，无法确认要分配的项目")
+    project = projects[0]
     gid = str(project.group_id)
 
     trans = await get_db_user(ep.translator_qq, gid)
@@ -424,6 +602,120 @@ async def update_episode(id: int, form: EpisodeUpdate):
         await send_group_message(int(gid), msg)
 
     return {"status": "success"}
+
+@api_router.post("/episode/complete")
+async def complete_episode_by_assignee(form: EpisodeCompletion):
+    role_status = {
+        "translator": (1, "translator"),
+        "proofreader": (2, "proofreader"),
+        "picture_editor": (3, "typesetter"),
+        "coordinator": (4, "supervisor"),
+    }
+    if form.role not in role_status:
+        raise HTTPException(422, "不支持的任务角色")
+
+    status, assignee_field = role_status[form.role]
+    projects = await find_projects_by_name_or_alias(form.project_name)
+    if not projects:
+        raise HTTPException(404, "未找到匹配的项目或别名")
+    if len(projects) > 1:
+        raise HTTPException(409, "匹配到多个项目，无法确认要完成的项目")
+    episode = await Episode.get_or_none(
+        project=projects[0], title=form.episode_title, status=status
+    ).prefetch_related(
+        "project",
+        "project__leader",
+        "translator",
+        "proofreader",
+        "typesetter",
+        "supervisor",
+    )
+    if not episode or not getattr(episode, assignee_field):
+        raise HTTPException(404, "未找到匹配的任务或负责人")
+    assignee = getattr(episode, assignee_field)
+    if assignee.name != form.user_name:
+        raise HTTPException(403, "当前成员不是该工序负责人")
+    bot = await find_bot_for_group(str(episode.project.group_id))
+    await complete_episode(
+        episode,
+        assignee.qq_id,
+        assignee.name,
+        int(episode.project.group_id),
+        bot,
+    )
+    return {"status": "success", "episode_id": episode.id}
+
+@api_router.post("/episode/manual-complete")
+async def manually_complete_episode(form: ManualEpisodeCompletion):
+    projects = await find_projects_by_name_or_alias(form.project_name)
+    if not projects:
+        raise HTTPException(404, "未找到匹配的项目或别名")
+    if len(projects) > 1:
+        raise HTTPException(409, "匹配到多个项目，无法确认要完结的话数")
+    project = projects[0]
+    episode = await Episode.get_or_none(
+        project=project, title=form.episode_title
+    )
+    if not episode:
+        raise HTTPException(404, "未找到匹配的话数")
+    if episode.status == 5:
+        return {
+            "status": "already_completed",
+            "episode_id": episode.id,
+        }
+
+    episode.status = 5
+    await episode.save()
+    await send_group_message(
+        int(project.group_id),
+        Message(f"🎆 [{project.name} {episode.title}] 已由萌翻管理员手动完结！"),
+    )
+    return {"status": "success", "episode_id": episode.id}
+
+@api_router.post("/episode/member/sync")
+async def sync_member(form: MemberSynchronization):
+    if form.action not in {"added", "changed", "removed"}:
+        raise HTTPException(422, "不支持的成员变动类型")
+    projects = await find_projects_by_name_or_alias(form.project_name)
+    if not projects:
+        raise HTTPException(404, "未找到匹配的项目或别名")
+    if len(projects) > 1:
+        raise HTTPException(409, "匹配到多个项目，无法确认要同步的项目")
+    project = projects[0]
+    episode = await Episode.get_or_none(project=project, title=form.episode_title)
+    if not episode:
+        raise HTTPException(404, "未找到匹配的话数")
+    role_fields = {
+        "translator": "translator",
+        "proofreader": "proofreader",
+        "picture_editor": "typesetter",
+        "coordinator": "supervisor",
+    }
+    role_field = role_fields.get(form.role)
+    user = None
+    if role_field and form.action != "removed":
+        user = await find_or_create_group_user(project, form.user_name)
+        setattr(episode, role_field, user)
+        await episode.save()
+    elif role_field:
+        assigned_user = await getattr(episode, role_field)
+        if assigned_user and assigned_user.name == form.user_name:
+            setattr(episode, role_field, None)
+            await episode.save()
+
+    if form.action == "removed":
+        await send_group_message(
+            int(project.group_id),
+            Message(
+                f"📢 [{project.name} {episode.title}] 成员变动："
+                f"{form.user_name} 移出 {form.role}"
+            ),
+        )
+    return {
+        "status": "success",
+        "user_id": user.id if user else None,
+        "episode_role": role_field,
+    }
 
 @api_router.delete("/episode/{id}")
 async def delete_episode(id: int):
