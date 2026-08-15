@@ -1,6 +1,10 @@
+import asyncio
 import os
+import random
+
 from nonebot import on_command, require, get_driver, logger, get_plugin_config, get_asgi
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
+from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from tortoise import Tortoise
@@ -12,6 +16,7 @@ from .utils import get_default_ddl, send_group_message
 from .web import api_router
 from .config import Config
 from . import scheduler
+from .view_renderer import RenderModule, render_modules, render_text_pages
 
 try:
     from fastapi import FastAPI
@@ -25,6 +30,7 @@ plugin_config = get_plugin_config(Config)
 MODELS_PATH = [f"{__name__}.models"]
 
 usage = """@Bot+帮助"""
+IMAGE_SEND_MAX_INTERVAL_SECONDS = 2
 
 # 插件元数据
 __plugin_meta__ = PluginMetadata(
@@ -92,9 +98,8 @@ async def init_web():
     except AttributeError:
         logger.warning("当前驱动器不支持 mount 操作，Web 后台可能无法访问 (请确保使用的是 ASGI 驱动器)")
 
-# === 辅助函数：智能查找项目 (FIXED) ===
-async def find_project(keyword: str) -> Project | None:
-    # Defining the relationships we need to load to avoid AttributeError
+# === 辅助函数：按当前群查找项目 ===
+async def find_project(keyword: str, group_id: str) -> Project | None:
     needed_fields = [
         'leader',
         'default_translator',
@@ -102,28 +107,34 @@ async def find_project(keyword: str) -> Project | None:
         'default_typesetter',
         'default_supervisor'
     ]
+    projects = Project.filter(group_id=str(group_id))
+    all_projs = await projects.prefetch_related(*needed_fields).order_by('-id').all()
 
-    # 1. 尝试名字精确匹配
-    p = await Project.get_or_none(name=keyword).prefetch_related(*needed_fields)
-    if p: return p
+    # 1. 项目列表中的显示序号，例如【1】
+    if keyword.isdecimal():
+        position = int(keyword)
+        if 1 <= position <= len(all_projs):
+            return all_projs[position - 1]
 
-    # 2. 尝试别名匹配 (混合逻辑)
-    # 先尝试数据库层面的数组包含 (精确匹配别名中的某一个)
-    try:
-        p = await Project.filter(aliases__contains=[keyword]).prefetch_related(*needed_fields).first()
-        if p: return p
-    except:
-        pass # 忽略 JSON 格式错误
+    # 2. 项目名称精确匹配
+    for project in all_projs:
+        if project.name == keyword:
+            return project
 
-    # 3. 兜底：内存遍历 (支持模糊匹配，比如别名"MyGo"，搜"Go"也能找到)
-    # 因为项目通常不会成千上万，内存遍历非常快且不易报错
-    all_projs = await Project.all().prefetch_related(*needed_fields)
+    # 3. 别称和标签精确匹配
+    for project in all_projs:
+        aliases = project.aliases if isinstance(project.aliases, list) else []
+        tags = project.tags if isinstance(project.tags, list) else []
+        if keyword in aliases or keyword in tags:
+            return project
+
+    # 4. 名称、别称和标签模糊匹配
     for proj in all_projs:
-        # 确保 aliases 是列表
         aliases = proj.aliases if isinstance(proj.aliases, list) else []
-        for alias in aliases:
-            if keyword in alias: # 只要包含这个字就算
-                return proj
+        tags = proj.tags if isinstance(proj.tags, list) else []
+        search_terms = [proj.name, *aliases, *tags]
+        if any(isinstance(term, str) and keyword in term for term in search_terms):
+            return proj
 
     return None
 
@@ -160,49 +171,53 @@ async def find_episode(project: Project, keyword: str) -> Episode | None:
 # 1. 帮助指令
 cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=True)
 
+
+async def finish_image(
+    matcher: Matcher, title: str, modules: list[RenderModule]
+):
+    images = render_modules(title, modules)
+    for index, image in enumerate(images):
+        if index:
+            await asyncio.sleep(random.uniform(0, IMAGE_SEND_MAX_INTERVAL_SECONDS))
+        await matcher.send(MessageSegment.image(image))
+    await matcher.finish()
+
+
 @cmd_help.handle()
-async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    msg = Message(
-        "✨ 汉化组小助手在这里捏！\n"
-        "========================\n"
-        "🧐 想看进度?\n"
-        "   • 查看 / 列表 -> 看看手里有多少坑\n"
-        "   • 查看 <项目> -> 盯着某个坑看\n"
-        "   • 查看 <项目> <话数> -> 查查某话动没动\n\n"
-        "📝 做完啦?\n"
-        "   • 完成 <项目> <话数> -> 交稿！(会自动艾特下一个人哦)\n\n"
-        "💻 后台管理\n"
-        "   • 戳这里: http://<你的IP>:端口/trans/\n"
-        "   (开新坑、分锅、定死线都在这里哒)\n"
-        "========================\n"
-        "大家辛苦啦，要注意休息哦"
+async def _(matcher: Matcher):
+    await finish_image(
+        matcher,
+        "汉化进度助手",
+        [
+            RenderModule("查看进度", ["查看 / 列表：显示本群全部项目", "查看 <项目>：显示项目任务", "查看 <项目> <话数>：显示单个任务"]),
+            RenderModule("项目搜索", ["仅搜索当前群绑定的项目", "依次匹配：列表序号、名称、别称/标签、模糊关键词"]),
+            RenderModule("完成任务", ["完成 <项目> <话数>", "完成后会自动提醒下一位负责人"]),
+            RenderModule("后台管理", ["http://<你的IP>:端口/trans/", "开新坑、分配成员和设置死线"]),
+        ],
     )
-    # 使用通用发送函数
-    await send_group_message(int(event.group_id), msg, bot=bot)
-    await cmd_finish.finish()
 
 
 # 2. 完成指令
 cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=True)
 
 @cmd_finish.handle()
-async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     msg = args.extract_plain_text().strip().split()
     if len(msg) < 2:
-        await cmd_finish.finish("唔…指令格式不对哦？😵‍💫\n试试这样：完成 <项目名> <话数>")
+        await finish_image(matcher, "指令格式不正确", [RenderModule("请这样输入", ["完成 <项目名> <话数>"])])
 
     proj_input, ep_input = msg[0], msg[1]
     qq_id = str(event.user_id)
 
     # 1. 智能查找项目
-    project = await find_project(proj_input)
+    project = await find_project(proj_input, str(event.group_id))
     if not project:
-        await cmd_finish.finish(f"找不到叫「{proj_input}」的项目捏… 是不是名字打错啦？👀")
+        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [proj_input])])
 
     # 2. 智能查找话数
     episode = await find_episode(project, ep_input)
     if not episode:
-        await cmd_finish.finish(f"找不到话数「{ep_input}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
+        await finish_image(matcher, "未找到任务", [RenderModule(project.name, [ep_input])])
 
     # 3. 权限检查
     current_status = episode.status
@@ -235,15 +250,15 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             target_user_name = episode.supervisor.name
             if episode.supervisor.qq_id == qq_id: is_assignee = True
     elif current_status == 5:
-        await cmd_finish.finish("✅ 这个任务已经是完结状态啦")
+        await finish_image(matcher, "任务已完结", [RenderModule("无需重复提交", [f"{project.name} {episode.title}"])])
     else:
-        await cmd_finish.finish("⚠️ 这个任务还没在后台分配人员呢，先去Web端把锅分好再说吧！")
+        await finish_image(matcher, "任务尚未分配", [RenderModule("请前往后台", ["先为当前阶段分配负责人"] )])
 
     if not (is_assignee or is_leader or is_group_admin):
-        await cmd_finish.finish(
-            f"🙅‍♀️ 达咩！不可以操作！\n"
-            f"当前是【{stage_name}】阶段，负责人是: {target_user_name}\n"
-            f"只有本人、组长或者管理员才能交稿哦~"
+        await finish_image(
+            matcher,
+            "没有提交权限",
+            [RenderModule("当前负责人", [f"阶段：{stage_name}", f"负责人：{target_user_name}", "仅本人、组长或管理员可提交"])],
         )
 
     # 4. 状态流转
@@ -272,17 +287,14 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
     await episode.save()
 
-    # 5. 发送反馈
     status_text = ['','翻译','校对','嵌字','监修'][current_status]
-
-    reply = Message(f"🎉 辛苦啦！[{project.name} {episode.title}] {status_text}搞定！✨")
+    result_lines = [f"{project.name} {episode.title}", f"{status_text}已完成"]
     if not is_assignee:
-        reply += Message(f" (由 {event.sender.card or event.sender.nickname} 代提交)")
-    reply += Message("\n")
+        result_lines.append(f"由 {event.sender.card or event.sender.nickname} 代提交")
 
+    target_qq = None
     if episode.status == 5:
-        reply += Message("🎆 撒花！全工序完结！")
-        target_qq = None
+        result_lines.append("全部工序已完结，准备发布")
         if project.leader:
             target_qq = project.leader.qq_id
         else:
@@ -293,12 +305,10 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
             except Exception as e:
                 logger.warning(f"获取群主失败: {e}")
 
-        if target_qq:
-            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收，准备发布啦~ 🚀")
-        else:
-            reply += Message("\n请管理员查收发布")
+        if not target_qq:
+            result_lines.append("请管理员查收发布")
     else:
-        reply += Message(f"➡️ 进入 [{next_role}] 阶段\n")
+        result_lines.append(f"下一阶段：{next_role}")
 
         next_ddl = None
         if episode.status == 2: next_ddl = episode.ddl_proof
@@ -306,13 +316,17 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         elif episode.status == 4: next_ddl = episode.ddl_supervision
 
         if next_ddl:
-            reply += Message(f"📅 死线: {next_ddl.strftime('%m-%d')}\n")
+            result_lines.append(f"截止日期：{next_ddl.strftime('%m-%d')}")
         if next_user:
-            reply += Message("接力棒交给你啦！") + MessageSegment.at(next_user.qq_id) + Message(" 拜托了捏~ 🙏")
+            target_qq = next_user.qq_id
+            result_lines.append("已通知下一位负责人")
         else:
-            reply += Message("⚠️ 哎呀，下一棒还没人接手！组长快来分锅！🍲")
+            result_lines.append("下一阶段尚未分配负责人")
 
-    # 使用通用发送函数
+    image = render_modules("任务完成", [RenderModule("处理结果", result_lines)])[0]
+    reply = Message(MessageSegment.image(image))
+    if target_qq:
+        reply += MessageSegment.at(target_qq)
     await send_group_message(int(event.group_id), reply, bot=bot)
     await cmd_finish.finish()
 
@@ -320,8 +334,23 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 # 3. 查看指令
 cmd_view = on_command("查看", aliases={"查看项目", "view", "进度", "项目列表"}, priority=5, block=True)
 
+
+async def send_view_images(matcher: Matcher, title: str, lines: list[str]):
+    try:
+        images = render_text_pages(title, lines)
+        for index, image in enumerate(images):
+            if index:
+                await asyncio.sleep(random.uniform(0, IMAGE_SEND_MAX_INTERVAL_SECONDS))
+            await matcher.send(MessageSegment.image(image))
+    except Exception as exc:
+        logger.exception(f"查看图片渲染失败: {exc}")
+        raise
+
+
 @cmd_view.handle()
-async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+async def _(
+    matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()
+):
     msg = args.extract_plain_text().strip().split()
 
     if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
@@ -333,25 +362,28 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
         )
 
         if not projects:
-            await cmd_view.finish("📭 本群目前没有正在进行的汉化项目哦 (空空如也)")
+            await finish_image(
+                matcher,
+                "项目一览",
+                [RenderModule("暂无项目", ["本群目前没有进行中的汉化项目"])],
+            )
 
-        reply = f"📂 本群 ({current_gid}) 项目一览 | 共 {len(projects)} 个\n"
-        reply += "━━━━━━━━━━━━━━"
+        lines = [f"本群项目一览 | 共 {len(projects)} 个", ""]
 
         for i, p in enumerate(projects):
-            reply += f"\n【{i+1}】{p.name}"
+            lines.append(f"【{i + 1}】{p.name}")
 
             info_parts = []
             if p.leader:
-                info_parts.append(f"👑{p.leader.name}")
+                info_parts.append(f"负责人：{p.leader.name}")
             if p.aliases:
                 shown_aliases = p.aliases[:2]
                 alias_str = ",".join(shown_aliases)
                 if len(p.aliases) > 2: alias_str += "..."
-                info_parts.append(f"🏷️{alias_str}")
+                info_parts.append(f"别名：{alias_str}")
 
             if info_parts:
-                reply += f"\n   {'  '.join(info_parts)}"
+                lines.append(f"  {'  '.join(info_parts)}")
 
             dt = p.default_translator.name if p.default_translator else "-"
             dp = p.default_proofreader.name if p.default_proofreader else "-"
@@ -360,63 +392,66 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
 
             # 只有当设置了至少一个默认人员时才显示此行
             if any(x != "-" for x in [dt, dp, dty, ds]):
-                reply += f"\n   🛡️ 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]"
+                lines.append(f"  默认编制：翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]")
 
-            reply += "\n━━━━━━━━━━━━━━"
+            lines.append("────────────────────")
 
-        await cmd_view.finish(reply.strip())
+        await send_view_images(matcher, "项目一览", lines)
+        await cmd_view.finish()
 
     target_name = msg[0]
     target_ep = msg[1] if len(msg) > 1 else None
 
     # 1. 智能查找项目
-    project = await find_project(target_name)
+    project = await find_project(target_name, str(event.group_id))
 
     if not project:
-        await cmd_view.finish(f"找不到叫「{target_name}」的项目捏… 是不是名字打错啦？👀")
+        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [target_name])])
 
     if target_ep:
         # 2. 智能查找话数
         episode = await find_episode(project, target_ep)
         if not episode:
-            await cmd_view.finish(f"找不到话数「{target_ep}」(项目: {project.name}) 捏… 是不是名字打错啦？👀")
+            await finish_image(matcher, "未找到任务", [RenderModule(project.name, [target_ep])])
 
         def fmt_role(user, ddl):
-            u_name = user.name if user else "❌未分配"
-            d_str = ddl.strftime('%m-%d') if ddl else "♾️"
+            u_name = user.name if user else "未分配"
+            d_str = ddl.strftime('%m-%d') if ddl else "无"
             return f"{u_name} (📅{d_str})"
 
-        status_map = {0:'💤躺平中', 1:'✍️翻译中', 2:'🔍校对中', 3:'🎨嵌字中', 4:'👀监修中', 5:'🏆已完结'}
-
-        reply = f"📝 {project.name} #{episode.title}\n"
-        reply += f"状态: {status_map.get(episode.status, '未知')}\n"
-        reply += f"━━━━━━━━━━━━━━\n"
-        reply += f"翻译: {fmt_role(episode.translator, episode.ddl_trans)}\n"
-        reply += f"校对: {fmt_role(episode.proofreader, episode.ddl_proof)}\n"
-        reply += f"嵌字: {fmt_role(episode.typesetter, episode.ddl_type)}\n"
-        reply += f"监修: {fmt_role(episode.supervisor, episode.ddl_supervision)}"
-
-        await cmd_view.finish(reply)
+        status_map = {0:'未开始', 1:'翻译中', 2:'校对中', 3:'嵌字中', 4:'监修中', 5:'已完结'}
+        lines = [
+            f"项目：{project.name}",
+            f"话数：{episode.title}",
+            f"状态：{status_map.get(episode.status, '未知')}",
+            "────────────────────",
+            f"翻译：{fmt_role(episode.translator, episode.ddl_trans)}",
+            f"校对：{fmt_role(episode.proofreader, episode.ddl_proof)}",
+            f"嵌字：{fmt_role(episode.typesetter, episode.ddl_type)}",
+            f"监修：{fmt_role(episode.supervisor, episode.ddl_supervision)}",
+        ]
+        await send_view_images(matcher, "任务详情", lines)
+        await cmd_view.finish()
 
     else:
         active_eps = await Episode.filter(project=project, status__lt=5).order_by('id').all()
 
-        reply = f"📊 【{project.name}】"
-        if project.aliases: reply += f"\n🏷️ 别名: {','.join(project.aliases)}"
-        if project.leader: reply += f"\n👑 组长: {project.leader.name}"
-        reply += "\n━━━━━━━━━━━━━━n"
+        lines = []
+        if project.aliases: lines.append(f"别名：{','.join(project.aliases)}")
+        if project.leader: lines.append(f"组长：{project.leader.name}")
+        if lines: lines.append("────────────────────")
 
         dt = project.default_translator.name if project.default_translator else "-"
         dp = project.default_proofreader.name if project.default_proofreader else "-"
         dty = project.default_typesetter.name if project.default_typesetter else "-"
         ds = project.default_supervisor.name if project.default_supervisor else "-"
-        reply += f"🛡️ 默认编制: 翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]\n"
-        reply += f"━━━━━━━━━━━━━━\n"
+        lines.append(f"默认编制：翻[{dt}] 校[{dp}] 嵌[{dty}] 监[{ds}]")
+        lines.append("────────────────────")
 
         if not active_eps:
-            reply += "🎉 现在的坑都填完啦？或者是还没开坑？(空空如也)"
+            lines.append("现在没有进行中的任务")
         else:
-            reply += f"🔥 进行中任务 ({len(active_eps)}):\n"
+            lines.append(f"进行中任务（{len(active_eps)}）")
             for ep in active_eps:
                 s_map = {0:'未', 1:'翻', 2:'校', 3:'嵌', 4:'监'}
                 curr_ddl = None
@@ -425,8 +460,8 @@ async def _(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
                 elif ep.status == 3: curr_ddl = ep.ddl_type
                 elif ep.status == 4: curr_ddl = ep.ddl_supervision
 
-                ddl_str = f" | 📅{curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
-                reply += f"[{s_map.get(ep.status)}] {ep.title}{ddl_str}\n"
+                ddl_str = f" | 截止 {curr_ddl.strftime('%m-%d')}" if curr_ddl else ""
+                lines.append(f"[{s_map.get(ep.status)}] {ep.title}{ddl_str}")
 
-        await send_group_message(int(event.group_id), reply, bot=bot)
-        await cmd_finish.finish()
+        await send_view_images(matcher, project.name, lines)
+        await cmd_view.finish()

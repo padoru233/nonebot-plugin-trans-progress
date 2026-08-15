@@ -1,16 +1,24 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
+
 from .models import Episode, GroupSetting
 from .utils import send_group_message
 
-async def check_and_send_broadcast(group_id: str, is_manual: bool = False):
+BROADCAST_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+
+async def check_and_send_broadcast(
+    group_id: str, is_manual: bool = False, now: datetime | None = None
+):
     """
     播报逻辑：
     1. 无论是自动还是手动，只播报 [今天截止] 和 [已超期] 的任务。
     2. 不去重 At，每个任务行后面紧跟负责人的 At。
     """
-    now = datetime.now()
+    now = now or datetime.now(BROADCAST_TIMEZONE)
     today_date = now.date()
 
     # 1. 获取该群所有未完结任务

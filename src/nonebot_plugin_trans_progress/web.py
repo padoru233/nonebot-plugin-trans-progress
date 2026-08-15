@@ -302,7 +302,7 @@ async def get_db_groups():
 
 @api_router.get("/projects")
 async def get_projects():
-    projects = await Project.all().prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter', 'default_supervisor')
+    projects = await Project.all().order_by('-id').prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter', 'default_supervisor')
 
     bot_groups_map = {}
     for bot in get_bots().values():
