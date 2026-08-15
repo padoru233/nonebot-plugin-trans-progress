@@ -116,3 +116,5 @@
 <div align="center">
   <img src="https://count.getloli.com/@nonebot-plugin-trans-progress?name=nonebot-plugin-trans-progress&theme=booru-qualityhentais&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto" alt="nonebot-plugin-trans-progress" />
 </div>
+
+图片文字使用 [LXGW Neo XiHei](https://github.com/lxgw/LxgwNeoXiHei) 的 `LXGWNeoXiHeiPlus.ttf`；emoji 使用 [Noto Emoji](https://github.com/googlefonts/noto-emoji) 的 `NotoColorEmoji.ttf`（[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)）。两者均随插件本地打包，不依赖外部 CDN。
