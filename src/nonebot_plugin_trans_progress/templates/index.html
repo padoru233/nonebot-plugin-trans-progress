@@ -7,52 +7,108 @@
     <title>汉化进度管理</title>
     <link rel="stylesheet" href="//unpkg.com/element-plus/dist/index.css" />
     <style>
-        /* === 全局样式优化 === */
+        /* === 视觉主题与基础布局 === */
         :root {
             --el-font-size-base: 16px !important;
+            --ink: #26364a;
+            --muted-ink: #6e7b8f;
+            --paper: #fffdf9;
+            --canvas: #f6f8ff;
+            --line: #dfe6f4;
+            --accent: #ef7394;
+            --accent-deep: #d9587d;
+            --sky: #61b6d9;
         }
 
         body {
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: #f5f7fa;
+            font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+            background-color: var(--canvas);
+            background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(225deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(315deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(45deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%);
+            background-position: 12px 0, 12px 0, 0 0, 0 0;
+            background-size: 24px 24px;
             font-size: 16px;
-            color: #303133;
+            color: var(--ink);
         }
 
         .header {
-            background: #fff;
-            padding: 0 15px;
-            height: 60px;
+            background: rgba(255, 253, 249, 0.94);
+            border-bottom: 2px solid #f5c5d1;
+            padding: 0 clamp(16px, 4vw, 56px);
+            height: 68px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 16px rgba(74, 101, 138, 0.10);
             position: sticky;
             top: 0;
             z-index: 100;
+            backdrop-filter: blur(12px);
         }
 
         .header .title {
-            font-size: 20px;
+            color: var(--accent-deep);
+            font-size: 21px;
             font-weight: 700;
             display: flex;
             align-items: center;
+            letter-spacing: 0;
         }
 
         .main-container {
-            padding: 15px;
-            max-width: 1400px;
-            width: 95%;
+            padding: 28px 20px 44px;
+            max-width: 1360px;
+            width: min(100%, 1360px);
+            box-sizing: border-box;
             margin: 0 auto;
         }
 
-        .el-collapse-item__header {
-            font-size: 16px;
-            font-weight: bold;
-            height: auto;
-            padding: 10px 0;
+        .el-tabs__header {
+            margin: 0 0 18px;
+            padding: 6px 8px 0;
+            background: rgba(255, 253, 249, 0.92);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: 0 6px 18px rgba(74, 101, 138, 0.07);
         }
+
+        .el-tabs__nav-wrap::after { display: none; }
+
+        .el-tabs__item {
+            height: 42px;
+            color: var(--muted-ink);
+            font-weight: 700;
+        }
+
+        .el-tabs__item.is-active { color: var(--accent-deep); }
+        .el-tabs__active-bar { background-color: var(--accent); height: 3px; }
+
+        .workspace-toolbar,
+        .member-toolbar {
+            background: var(--paper);
+            border: 1px solid var(--line);
+            border-top: 3px solid #f5c5d1;
+            border-radius: 8px;
+            box-shadow: 0 8px 20px rgba(74, 101, 138, 0.08);
+        }
+
+        .workspace-toolbar { padding: 18px; margin-bottom: 18px; }
+        .member-toolbar { padding: 14px; margin-bottom: 14px; }
+
+        .workspace-toolbar .el-button--primary,
+        .header .el-button--primary {
+            --el-button-bg-color: var(--accent);
+            --el-button-border-color: var(--accent);
+            --el-button-hover-bg-color: var(--accent-deep);
+            --el-button-hover-border-color: var(--accent-deep);
+        }
+
+        .project-list { display: grid; gap: 12px; }
+        .el-collapse { border: 0; }
+        .el-collapse-item { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--paper); box-shadow: 0 5px 16px rgba(74, 101, 138, 0.06); }
+        .el-collapse-item__header { border: 0; background: transparent; padding: 11px 16px; }
+        .el-collapse-item__wrap { border: 0; background: #fbfcff; }
+        .el-collapse-item__content { padding: 10px 16px 16px; }
 
         .project-header {
             display: flex;
@@ -71,15 +127,19 @@
             min-width: 200px;
         }
 
+        .project-info > span:first-child { color: var(--ink); font-size: 17px; }
+
         .stage-box {
-            background: #f9fafc;
-            border: 1px solid #e4e7ed;
-            border-radius: 4px;
-            padding: 6px;
-            margin-bottom: 6px;
+            background: #ffffff;
+            border: 1px solid #e5eaf3;
+            border-left: 4px solid #c5cedd;
+            border-radius: 6px;
+            padding: 7px 9px;
+            margin-bottom: 7px;
             display: flex;
             align-items: center;
             font-size: 14px;
+            box-sizing: border-box;
         }
 
         .stage-box.active {
@@ -102,6 +162,7 @@
         .stage-box.active.stage-1 {
             background: #ecf5ff;
             border-color: #d9ecff;
+            border-left-color: #409eff;
             color: #409eff;
         }
 
@@ -109,6 +170,7 @@
         .stage-box.active.stage-2 {
             background: #fdf6ec;
             border-color: #faecd8;
+            border-left-color: #e6a23c;
             color: #e6a23c;
         }
 
@@ -116,6 +178,7 @@
         .stage-box.active.stage-3 {
             background: #f0f9eb;
             border-color: #e1f3d8;
+            border-left-color: #67c23a;
             color: #67c23a;
         }
 
@@ -123,6 +186,7 @@
         .stage-box.active.stage-4 {
             background: #f9f0ff;
             border-color: #e9d8fd;
+            border-left-color: #b37feb;
             color: #b37feb;
         }
 
@@ -179,6 +243,27 @@
             display: inline-block;
         }
 
+        .empty-state {
+            padding: 42px 20px;
+            border: 1px dashed #cbd7e8;
+            border-radius: 8px;
+            background: rgba(255, 253, 249, 0.72);
+            text-align: center;
+            color: var(--muted-ink);
+        }
+
+        .settings-panel,
+        .member-panel {
+            padding: 16px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--paper);
+            box-shadow: 0 8px 20px rgba(74, 101, 138, 0.08);
+        }
+
+        .settings-panel .el-alert { margin-bottom: 16px !important; }
+        .el-table { --el-table-header-bg-color: #f3f7ff; --el-table-border-color: #dfe6f4; --el-table-row-hover-bg-color: #fff4f7; }
+
         @media (max-width: 768px) {
             .header {
                 padding: 0 10px;
@@ -201,6 +286,14 @@
             .el-tag {
                 margin-bottom: 2px;
             }
+
+            .main-container { padding: 18px 10px 32px; }
+            .workspace-toolbar, .member-toolbar, .settings-panel, .member-panel { padding: 12px; }
+            .el-collapse-item__header { padding: 10px; }
+            .el-collapse-item__content { padding: 8px 10px 12px; }
+            .project-info > span:first-child { width: 100%; }
+            .project-header { align-items: flex-start; }
+            .project-header > div:last-child { margin-left: auto; margin-right: 0 !important; }
         }
 
         .status-tag-0 {
@@ -277,8 +370,7 @@
 
                 <el-tabs v-model="activeTab" v-if="authorized">
                     <el-tab-pane label="项目列表" name="projects">
-                        <div
-                            style="background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ebeef5;">
+                        <div class="workspace-toolbar">
                             <el-row :gutter="10" align="middle">
                                 <el-col :span="6" :xs="24" style="margin-bottom:5px">
                                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -322,10 +414,9 @@
                             </el-row>
                         </div>
 
-                        <div v-if="filteredProjects.length === 0"
-                            style="text-align: center; color: #909399; margin-top: 40px;">没有找到匹配的项目</div>
+                        <div v-if="filteredProjects.length === 0" class="empty-state">没有找到匹配的项目</div>
 
-                        <el-collapse v-model="activeCollapse">
+                        <el-collapse v-model="activeCollapse" class="project-list">
                             <el-collapse-item v-for="p in filteredProjects" :key="p.id" :name="p.name">
                                 <template #title>
                                     <div class="project-header">
@@ -407,8 +498,9 @@
                     </el-tab-pane>
 
                     <el-tab-pane label="播报设置" name="settings">
+                        <div class="settings-panel">
                         <el-alert title="仅显示已同步成员的群组。设置每日自动播报时间（默认10:00），或手动点击一键催更。" type="info" show-icon
-                            style="margin-bottom: 15px;"></el-alert>
+                            ></el-alert>
                         <el-table :data="settingsList" border style="width: 100%" v-loading="loading" stripe>
                             <el-table-column prop="group_name" label="群名称" min-width="180">
                                 <template #default="{row}">
@@ -447,10 +539,12 @@
                                 </template>
                             </el-table-column>
                         </el-table>
+                        </div>
                     </el-tab-pane>
 
                     <el-tab-pane label="成员管理" name="members">
-                        <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div class="member-panel">
+                        <div class="member-toolbar" style="display: flex; gap: 10px; flex-wrap: wrap;">
                             <el-button type="success" icon="Refresh" @click="dialogs.sync = true">同步群成员</el-button>
                             <el-input v-model="memberSearch" placeholder="搜索成员/标签..." prefix-icon="Search" clearable
                                 style="width: 200px"></el-input>
@@ -484,6 +578,7 @@
                                 </template>
                             </el-table-column>
                         </el-table>
+                        </div>
                     </el-tab-pane>
                 </el-tabs>
             </el-main>
