@@ -28,7 +28,49 @@ class RenderModule(NamedTuple):
     lines: list[str]
 
 
-def render_text_pages(title: str, lines: list[str]) -> list[bytes]:
+class ColorPalette(NamedTuple):
+    background: str
+    panel: str
+    border: str
+    inner_border: str
+    header: str
+    header_text: str
+    module: str
+    module_border: str
+    module_title: str
+    divider: str
+    body_text: str
+
+
+BROWN_PALETTE = ColorPalette(
+    "#f6f0e5", "#fffdf7", "#5b3030", "#c9a56a", "#6d3131", "#fff7df",
+    "#fffaf0", "#b89561", "#6d3131", "#dec69d", "#302b28",
+)
+LIGHT_BLUE_PALETTE = ColorPalette(
+    "#eaf6ff", "#fafdff", "#5b9bc8", "#9dcae8", "#4d91c2", "#f6fcff",
+    "#f5fbff", "#8fc4e6", "#397cae", "#c6e1f2", "#26333c",
+)
+MINT_PALETTE = ColorPalette(
+    "#e9f8f5", "#fbfefd", "#4ca58d", "#9bd6c6", "#3e927d", "#f5fffb",
+    "#f4fcf9", "#88ccb9", "#347d6b", "#c3e7dc", "#263833",
+)
+GREEN_PALETTE = ColorPalette(
+    "#edf8ed", "#fcfffb", "#62a56d", "#aad9ae", "#4c9859", "#f7fff7",
+    "#f6fcf5", "#9dcea2", "#3c8349", "#cce7ce", "#28372a",
+)
+AMBER_PALETTE = ColorPalette(
+    "#fff8e8", "#fffefa", "#c89135", "#ecd297", "#b47d24", "#fffdf5",
+    "#fffcf2", "#e2bf75", "#966415", "#f1dfb2", "#3b3121",
+)
+CORAL_PALETTE = ColorPalette(
+    "#fff1ef", "#fffdfc", "#c9786d", "#ebbbb3", "#b96359", "#fff8f6",
+    "#fff9f8", "#e3a79e", "#9f5048", "#f0cbc5", "#3d2927",
+)
+
+
+def render_text_pages(
+    title: str, lines: list[str], palette: ColorPalette = BROWN_PALETTE
+) -> list[bytes]:
     modules: list[RenderModule] = []
     current_lines: list[str] = []
     for line in lines:
@@ -40,10 +82,12 @@ def render_text_pages(title: str, lines: list[str]) -> list[bytes]:
             current_lines.append(line)
     if current_lines or not modules:
         modules.append(RenderModule("", current_lines))
-    return render_modules(title, modules)
+    return render_modules(title, modules, palette)
 
 
-def render_modules(title: str, modules: list[RenderModule]) -> list[bytes]:
+def render_modules(
+    title: str, modules: list[RenderModule], palette: ColorPalette = BROWN_PALETTE
+) -> list[bytes]:
     title_font = ImageFont.truetype(FONT_PATH, TITLE_SIZE)
     module_title_font = ImageFont.truetype(FONT_PATH, MODULE_TITLE_SIZE)
     body_font = ImageFont.truetype(FONT_PATH, BODY_SIZE)
@@ -82,6 +126,7 @@ def render_modules(title: str, modules: list[RenderModule]) -> list[bytes]:
             title_font,
             module_title_font,
             body_font,
+            palette,
         )
         for page in pages
     ]
@@ -217,25 +262,26 @@ def _render_page(
     title_font: ImageFont.FreeTypeFont,
     module_title_font: ImageFont.FreeTypeFont,
     body_font: ImageFont.FreeTypeFont,
+    palette: ColorPalette,
 ) -> bytes:
-    image = Image.new("RGB", (IMAGE_WIDTH, image_height), "#f6f0e5")
+    image = Image.new("RGB", (IMAGE_WIDTH, image_height), palette.background)
     draw = ImageDraw.Draw(image)
     draw.rectangle(
         (OUTER_MARGIN, OUTER_MARGIN, IMAGE_WIDTH - OUTER_MARGIN, image_height - OUTER_MARGIN),
-        fill="#fffdf7",
-        outline="#5b3030",
+        fill=palette.panel,
+        outline=palette.border,
         width=4,
     )
     draw.rectangle(
         (OUTER_MARGIN + 12, OUTER_MARGIN + 12, IMAGE_WIDTH - OUTER_MARGIN - 12, image_height - OUTER_MARGIN - 12),
-        outline="#c9a56a",
+        outline=palette.inner_border,
         width=2,
     )
     header_top = CONTENT_MARGIN - 18
     draw.rounded_rectangle(
         (CONTENT_MARGIN, header_top, IMAGE_WIDTH - CONTENT_MARGIN, header_top + header_height),
         radius=8,
-        fill="#6d3131",
+        fill=palette.header,
     )
     title_y = header_top + 15
     title_line_height = _line_height(title_font)
@@ -247,7 +293,7 @@ def _render_page(
             (round((IMAGE_WIDTH - title_width) / 2), title_y),
             title_line,
             title_font,
-            "#fff7df",
+            palette.header_text,
         )
         title_y += title_line_height
 
@@ -258,8 +304,8 @@ def _render_page(
         draw.rounded_rectangle(
             (CONTENT_MARGIN, y, IMAGE_WIDTH - CONTENT_MARGIN, y + module_height),
             radius=8,
-            fill="#fffaf0",
-            outline="#b89561",
+            fill=palette.module,
+            outline=palette.module_border,
             width=2,
         )
         text_y = y + 18
@@ -270,10 +316,10 @@ def _render_page(
                 (CONTENT_MARGIN + 18, text_y),
                 module.title,
                 module_title_font,
-                "#6d3131",
+                palette.module_title,
             )
             text_y += 52
-            draw.line((CONTENT_MARGIN + 18, text_y - 10, IMAGE_WIDTH - CONTENT_MARGIN - 18, text_y - 10), fill="#dec69d", width=1)
+            draw.line((CONTENT_MARGIN + 18, text_y - 10, IMAGE_WIDTH - CONTENT_MARGIN - 18, text_y - 10), fill=palette.divider, width=1)
         for line in module.lines or [""]:
             _draw_text(
                 draw,
@@ -281,7 +327,7 @@ def _render_page(
                 (CONTENT_MARGIN + 18, text_y),
                 line,
                 body_font,
-                "#302b28",
+                palette.body_text,
             )
             text_y += line_height
         y += module_height + MODULE_GAP

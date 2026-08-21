@@ -3,22 +3,34 @@ import os
 import random
 import re
 
+from arclet.alconna import Alconna, Args
 from nonebot import get_asgi, get_driver, get_plugin_config, logger, on_command, on_message, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+from nonebot_plugin_alconna import on_alconna
 from tortoise import Tortoise
 from tortoise.queryset import Q
 
 # Ensure these imports exist in your project structure
 from .models import Project, Episode, User
 from .utils import get_default_ddl, send_group_message
+from .scheduling import record_stage_completion
 from .web import api_router
 from .config import Config
 from . import scheduler
-from .view_renderer import RenderModule, render_modules, render_text_pages
+from .view_renderer import (
+    AMBER_PALETTE,
+    CORAL_PALETTE,
+    GREEN_PALETTE,
+    LIGHT_BLUE_PALETTE,
+    MINT_PALETTE,
+    RenderModule,
+    render_modules,
+    render_text_pages,
+)
 
 try:
     from fastapi import FastAPI
@@ -30,6 +42,18 @@ driver = get_driver()
 plugin_config = get_plugin_config(Config)
 
 MODELS_PATH = [f"{__name__}.models"]
+
+SCHEDULE_MIGRATION = """
+ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS auto_schedule BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_trans TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_proof TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_type TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_supervision TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_trans TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_proof TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_type TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_supervision TIMESTAMPTZ;
+"""
 
 usage = """@Bot+帮助"""
 IMAGE_SEND_MAX_INTERVAL_SECONDS = 2
@@ -56,6 +80,9 @@ async def init_db():
             modules={"models": MODELS_PATH}
         )
         await Tortoise.generate_schemas(safe=True)
+        if db_url.startswith(("postgres://", "postgresql://")):
+            connection = Tortoise.get_connection("default")
+            await connection.execute_script(SCHEDULE_MIGRATION)
         logger.info("数据库连接成功！")
     except Exception as e:
         logger.error(f"数据库连接失败: {e}")
@@ -76,7 +103,7 @@ async def init_web():
     sub_app = FastAPI(
         title="汉化进度管理",
         description="NoneBot Plugin Trans Progress API",
-        version="0.3.13",
+        version="0.5.3",
         docs_url="/docs",
         openapi_url="/openapi.json"
     )
@@ -175,9 +202,9 @@ cmd_help = on_command("帮助", aliases={"help", "菜单"}, priority=5, block=Tr
 
 
 async def finish_image(
-    matcher: Matcher, title: str, modules: list[RenderModule]
+    matcher: Matcher, title: str, modules: list[RenderModule], *, palette=LIGHT_BLUE_PALETTE
 ):
-    images = render_modules(title, modules)
+    images = render_modules(title, modules, palette)
     for index, image in enumerate(images):
         if index:
             await asyncio.sleep(random.uniform(0, IMAGE_SEND_MAX_INTERVAL_SECONDS))
@@ -192,27 +219,83 @@ async def _(matcher: Matcher):
         "汉化进度助手",
         [
             RenderModule("查看进度", ["查看 / 列表：显示本群全部项目", "查看 <项目>：显示项目任务", "查看 <项目> <话数>：显示单个任务"]),
+            RenderModule("我的项目", ["我的项目：显示当前群内你参与的未完成话数和截止日期"]),
             RenderModule("项目搜索", ["仅搜索当前群绑定的项目", "依次匹配：列表序号、名称、别称/标签、模糊关键词"]),
-            RenderModule("完成任务", ["完成 <项目> <话数> 或者 <项目> <话数> 好了", "完成后会自动提醒下一位负责人"]),
+            RenderModule("完成任务", ["完成 <项目> <话数> 或 完成<项目><话数>", "快捷完成：<项目> <话数> 好了", "完成后会自动提醒下一位负责人"]),
             RenderModule("后台管理", ["http://<你的IP>:8080/trans/", "开新坑、分配成员和设置死线"]),
         ],
+        palette=MINT_PALETTE,
     )
 
 
 # 2. 完成指令
-cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=True)
-FINISH_KEYWORD_PATTERN = re.compile(r"^(.+?)\s+(\S+)\s+好了[！!。]?$", re.DOTALL)
+cmd_finish = on_alconna(
+    Alconna("完成", Args["task?", str]),
+    priority=5,
+    block=True,
+)
+cmd_finish.shortcut("完成(?P<task>.*?)", command="完成", arguments=["{task}"], prefix=True)
+cmd_finish.shortcut("交稿(?P<task>.*?)", command="完成", arguments=["{task}"], prefix=True)
+cmd_finish.shortcut("done(?P<task>.*?)", command="完成", arguments=["{task}"], prefix=True)
+FINISH_KEYWORD_PATTERN = re.compile(r"^(.+?)好了[！!。]?$", re.DOTALL)
 
 
 def parse_finish_keyword(message: Message) -> tuple[str, str] | None:
     match = FINISH_KEYWORD_PATTERN.fullmatch(message.extract_plain_text().strip())
     if not match:
         return None
-    return match.group(1), match.group(2)
+    task = match.group(1).strip()
+    parts = task.rsplit(maxsplit=1)
+    return (parts[0], parts[1]) if len(parts) == 2 else None
+
+
+async def find_compact_completion_inputs(
+    task: str, group_id: str
+) -> tuple[str, str] | None:
+    projects = await Project.filter(group_id=group_id).all()
+    matches: list[tuple[str, str]] = []
+    for project in projects:
+        identifiers = [project.name]
+        if isinstance(project.aliases, list):
+            identifiers.extend(alias for alias in project.aliases if isinstance(alias, str))
+        for identifier in identifiers:
+            if not identifier or not task.startswith(identifier):
+                continue
+            episode_input = task.removeprefix(identifier).strip()
+            if not episode_input:
+                continue
+            episode = await find_episode(project, episode_input)
+            if episode:
+                matches.append((project.name, episode.title))
+
+    unique_matches = list(dict.fromkeys(matches))
+    return unique_matches[0] if len(unique_matches) == 1 else None
+
+
+async def parse_completion_inputs(
+    task: str, group_id: str
+) -> tuple[str, str] | None:
+    parts = task.strip().rsplit(maxsplit=1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return await find_compact_completion_inputs(task.strip(), group_id)
+
+
+def extract_completion_task(message: Message) -> str:
+    text = message.extract_plain_text().strip()
+    for command in ("完成", "交稿", "done"):
+        if text.startswith(command):
+            return text.removeprefix(command).strip()
+    return text
 
 
 async def is_finish_keyword(event: GroupMessageEvent) -> bool:
-    return isinstance(event, GroupMessageEvent) and parse_finish_keyword(event.get_message()) is not None
+    if not isinstance(event, GroupMessageEvent):
+        return False
+    if parse_finish_keyword(event.get_message()):
+        return True
+    match = FINISH_KEYWORD_PATTERN.fullmatch(event.get_message().extract_plain_text().strip())
+    return bool(match and await find_compact_completion_inputs(match.group(1), str(event.group_id)))
 
 
 async def handle_episode_completion(
@@ -227,13 +310,13 @@ async def handle_episode_completion(
     # 1. 智能查找项目
     project = await find_project(proj_input, str(event.group_id))
     if not project:
-        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [proj_input])])
+        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [proj_input])], palette=CORAL_PALETTE)
     assert project is not None
 
     # 2. 智能查找话数
     episode = await find_episode(project, ep_input)
     if not episode:
-        await finish_image(matcher, "未找到任务", [RenderModule(project.name, [ep_input])])
+        await finish_image(matcher, "未找到任务", [RenderModule(project.name, [ep_input])], palette=CORAL_PALETTE)
     assert episode is not None
 
     # 3. 权限检查
@@ -267,20 +350,22 @@ async def handle_episode_completion(
             target_user_name = episode.supervisor.name
             if episode.supervisor.qq_id == qq_id: is_assignee = True
     elif current_status == 5:
-        await finish_image(matcher, "任务已完结", [RenderModule("无需重复提交", [f"{project.name} {episode.title}"])])
+        await finish_image(matcher, "任务已完结", [RenderModule("无需重复提交", [f"{project.name} {episode.title}"])], palette=AMBER_PALETTE)
     else:
-        await finish_image(matcher, "任务尚未分配", [RenderModule("请前往后台", ["先为当前阶段分配负责人"] )])
+        await finish_image(matcher, "任务尚未分配", [RenderModule("请前往后台", ["先为当前阶段分配负责人"] )], palette=AMBER_PALETTE)
 
     if not (is_assignee or is_leader or is_group_admin):
         await finish_image(
             matcher,
             "没有提交权限",
             [RenderModule("当前负责人", [f"阶段：{stage_name}", f"负责人：{target_user_name}", "仅本人、组长或管理员可提交"])],
+            palette=CORAL_PALETTE,
         )
 
     # 4. 状态流转
     next_role = ""
     next_user = None
+    await record_stage_completion(episode, current_status)
 
     if current_status == 1:
         episode.status = 2
@@ -340,19 +425,26 @@ async def handle_episode_completion(
         else:
             result_lines.append("下一阶段尚未分配负责人")
 
-    image = render_modules("任务完成", [RenderModule("处理结果", result_lines)])[0]
+    image = render_modules("任务完成", [RenderModule("处理结果", result_lines)], GREEN_PALETTE)[0]
     reply = Message(MessageSegment.image(image))
     if target_qq:
         reply += MessageSegment.at(target_qq)
     await send_group_message(int(event.group_id), reply, bot=bot)
 
 @cmd_finish.handle()
-async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    msg = args.extract_plain_text().strip().split()
-    if len(msg) < 2:
-        await finish_image(matcher, "指令格式不正确", [RenderModule("请这样输入", ["完成 <项目名> <话数>"])])
+async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
+    task = extract_completion_task(event.get_message())
+    parsed = await parse_completion_inputs(task, str(event.group_id))
+    if not parsed:
+        await finish_image(
+            matcher,
+            "指令格式不正确",
+            [RenderModule("请这样输入", ["完成 <项目名> <话数> 或 完成<项目名><话数>"])],
+            palette=AMBER_PALETTE,
+        )
 
-    proj_input, ep_input = msg[0], msg[1]
+    assert parsed is not None
+    proj_input, ep_input = parsed
     await handle_episode_completion(matcher, bot, event, proj_input, ep_input)
     await cmd_finish.finish()
 
@@ -363,6 +455,10 @@ keyword_finish = on_message(rule=Rule(is_finish_keyword), priority=6, block=True
 @keyword_finish.handle()
 async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
     parsed = parse_finish_keyword(event.get_message())
+    if not parsed:
+        match = FINISH_KEYWORD_PATTERN.fullmatch(event.get_message().extract_plain_text().strip())
+        if match:
+            parsed = await find_compact_completion_inputs(match.group(1), str(event.group_id))
     if parsed:
         await handle_episode_completion(matcher, bot, event, *parsed)
     await keyword_finish.finish()
@@ -372,9 +468,11 @@ async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
 cmd_view = on_command("查看", aliases={"查看项目", "view", "进度", "项目列表"}, priority=5, block=True)
 
 
-async def send_view_images(matcher: Matcher, title: str, lines: list[str]):
+async def send_view_images(
+    matcher: Matcher, title: str, lines: list[str], *, palette=LIGHT_BLUE_PALETTE
+):
     try:
-        images = render_text_pages(title, lines)
+        images = render_text_pages(title, lines, palette)
         for index, image in enumerate(images):
             if index:
                 await asyncio.sleep(random.uniform(0, IMAGE_SEND_MAX_INTERVAL_SECONDS))
@@ -382,6 +480,52 @@ async def send_view_images(matcher: Matcher, title: str, lines: list[str]):
     except Exception as exc:
         logger.exception(f"查看图片渲染失败: {exc}")
         raise
+
+
+cmd_my_projects = on_command("我的项目", priority=5, block=True)
+
+
+@cmd_my_projects.handle()
+async def _(matcher: Matcher, event: GroupMessageEvent):
+    qq_id = str(event.user_id)
+    group_id = str(event.group_id)
+    episodes = await Episode.filter(
+        Q(translator__qq_id=qq_id)
+        | Q(proofreader__qq_id=qq_id)
+        | Q(typesetter__qq_id=qq_id)
+        | Q(supervisor__qq_id=qq_id),
+        project__group_id=group_id,
+        status__lt=5,
+    ).prefetch_related("project", "translator", "proofreader", "typesetter", "supervisor").order_by("project_id", "id")
+
+    if not episodes:
+        await finish_image(
+            matcher,
+            "我的项目",
+            [RenderModule("暂无未完成项目", ["你在本群没有参与中的项目话数"])],
+            palette=LIGHT_BLUE_PALETTE,
+        )
+
+    stage_map = {
+        0: ("未开始", None),
+        1: ("翻译", "ddl_trans"),
+        2: ("校对", "ddl_proof"),
+        3: ("嵌字", "ddl_type"),
+        4: ("监修", "ddl_supervision"),
+    }
+    lines = [f"本群未完成话数 | 共 {len(episodes)} 个", ""]
+    for episode in episodes:
+        stage, ddl_field = stage_map[episode.status]
+        deadline = getattr(episode, ddl_field) if ddl_field else None
+        deadline_text = deadline.strftime("%m-%d") if deadline else "未设置"
+        lines.extend([
+            f"【{episode.project.name}】{episode.title}",
+            f"  当前：{stage} | 截止：{deadline_text}",
+            "────────────────────",
+        ])
+
+    await send_view_images(matcher, "我的项目", lines, palette=LIGHT_BLUE_PALETTE)
+    await cmd_my_projects.finish()
 
 
 @cmd_view.handle()
@@ -403,6 +547,7 @@ async def _(
                 matcher,
                 "项目一览",
                 [RenderModule("暂无项目", ["本群目前没有进行中的汉化项目"])],
+                palette=LIGHT_BLUE_PALETTE,
             )
 
         lines = [f"本群项目一览 | 共 {len(projects)} 个", ""]
@@ -443,13 +588,13 @@ async def _(
     project = await find_project(target_name, str(event.group_id))
 
     if not project:
-        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [target_name])])
+        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [target_name])], palette=LIGHT_BLUE_PALETTE)
 
     if target_ep:
         # 2. 智能查找话数
         episode = await find_episode(project, target_ep)
         if not episode:
-            await finish_image(matcher, "未找到任务", [RenderModule(project.name, [target_ep])])
+            await finish_image(matcher, "未找到任务", [RenderModule(project.name, [target_ep])], palette=LIGHT_BLUE_PALETTE)
 
         def fmt_role(user, ddl):
             u_name = user.name if user else "未分配"
@@ -502,20 +647,3 @@ async def _(
 
         await send_view_images(matcher, project.name, lines)
         await cmd_view.finish()
-from .scheduling import record_stage_completion
-EPISODE_SCHEDULE_MIGRATION = """
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS auto_schedule BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_trans TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_proof TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_type TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_supervision TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_trans TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_proof TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_type TIMESTAMPTZ;
-ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_supervision TIMESTAMPTZ;
-"""
-
-        if db_url.startswith(("postgres://", "postgresql://")):
-            connection = Tortoise.get_connection("default")
-            await connection.execute_script(EPISODE_SCHEDULE_MIGRATION)
-    await record_stage_completion(episode, current_status)

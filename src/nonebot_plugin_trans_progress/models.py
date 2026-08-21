@@ -26,6 +26,7 @@ class Project(models.Model):
     default_proofreader = fields.ForeignKeyField('models.User', related_name='def_proof_projects', null=True)
     default_typesetter = fields.ForeignKeyField('models.User', related_name='def_type_projects', null=True)
     default_supervisor = fields.ForeignKeyField('models.User', related_name='def_super_projects', null=True)
+    auto_schedule = fields.BooleanField(default=True)
 
     class Meta:
         table = "trans_projects"
@@ -36,7 +37,6 @@ class Episode(models.Model):
     title = fields.CharField(max_length=50)
     # 状态定义: 0:未开始, 1:翻译, 2:校对, 3:嵌字, 4:监修, 5:完结
     status = fields.IntField(default=0)
-    auto_schedule = fields.BooleanField(default=True)
 
     translator = fields.ForeignKeyField('models.User', related_name='tasks_trans', null=True)
     proofreader = fields.ForeignKeyField('models.User', related_name='tasks_proof', null=True)

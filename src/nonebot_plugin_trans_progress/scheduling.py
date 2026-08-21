@@ -18,6 +18,10 @@ def deadline_from_start(start_time: datetime) -> datetime:
 
 async def initialize_episode_schedule(episode: Episode, now: datetime | None = None):
     """Use the preceding episode's actual stage completion as each stage anchor."""
+    await episode.fetch_related("project")
+    if not episode.project.auto_schedule:
+        return
+
     base_time = now or datetime.now()
     previous_episodes = await Episode.filter(
         project=episode.project, id__lt=episode.id
@@ -44,11 +48,12 @@ async def record_stage_completion(
     episode: Episode, stage: int, completed_at: datetime | None = None
 ):
     """Carry a completed stage's time to the oldest eligible following episode."""
+    await episode.fetch_related("project")
     started_field, completed_field, deadline_field = STAGE_TIMING_FIELDS[stage]
     completion_time = completed_at or datetime.now()
     setattr(episode, completed_field, completion_time)
 
-    if episode.auto_schedule and stage < 4:
+    if episode.project.auto_schedule and stage < 4:
         next_started_field, _, next_deadline_field = STAGE_TIMING_FIELDS[stage + 1]
         setattr(episode, next_started_field, completion_time)
         setattr(episode, next_deadline_field, deadline_from_start(completion_time))
@@ -58,8 +63,9 @@ async def record_stage_completion(
         project=episode.project,
         id__gt=episode.id,
         status__lt=5,
-        auto_schedule=True,
     ).order_by("id")
+    if not episode.project.auto_schedule:
+        return None
     next_episode = next(
         (
             candidate

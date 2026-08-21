@@ -36,6 +36,7 @@ class ProjectCreate(BaseModel):
     aliases: List[str] = []
     tags: List[str] = []
     group_id: str
+    auto_schedule: bool = True
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -46,6 +47,7 @@ class ProjectUpdate(BaseModel):
     name: str
     aliases: List[str] = []
     tags: List[str] = []
+    auto_schedule: bool = True
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -59,7 +61,6 @@ class MemberUpdate(BaseModel):
 class EpisodeCreate(BaseModel):
     project_name: str
     title: str
-    auto_schedule: bool = True
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -72,7 +73,6 @@ class EpisodeCreate(BaseModel):
 class EpisodeUpdate(BaseModel):
     title: str
     status: int
-    auto_schedule: bool = True
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -353,7 +353,6 @@ async def get_projects():
         for e in eps:
             ep_list.append({
                 "id": e.id, "title": e.title, "status": e.status,
-                "auto_schedule": e.auto_schedule,
                 "ddl_trans": e.ddl_trans, "ddl_proof": e.ddl_proof, "ddl_type": e.ddl_type,
                 "ddl_supervision": e.ddl_supervision,
                 "translator": {"name": e.translator.name, "qq_id": e.translator.qq_id} if e.translator else None,
@@ -379,6 +378,7 @@ async def get_projects():
             "group_id": p.group_id,
             "group_name": real_group_name,
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
+            "auto_schedule": p.auto_schedule,
             "defaults": defaults,
             "episodes": ep_list
         })
@@ -450,6 +450,7 @@ async def create_project(proj: ProjectCreate):
         name=proj.name,
         aliases=proj.aliases,
         tags=proj.tags,
+        auto_schedule=proj.auto_schedule,
         group_id=gid, group_name=g_name, leader=leader,
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type,
         default_supervisor=d_super
@@ -488,6 +489,7 @@ async def update_project(id: int, form: ProjectUpdate):
     p.name = form.name
     p.aliases = form.aliases
     p.tags = form.tags
+    p.auto_schedule = form.auto_schedule
 
     p.leader = await get_db_user(form.leader_qq, gid)
     p.default_translator = await get_db_user(form.default_translator_qq, gid)
@@ -528,7 +530,6 @@ async def ensure_episode(form: EpisodeEnsure):
         project=project,
         title=form.title,
         status=1,
-        auto_schedule=True,
         **default_assignees,
     )
     await initialize_episode_schedule(episode)
@@ -566,11 +567,10 @@ async def add_episode(ep: EpisodeCreate):
 
     episode = await Episode.create(
         project=project, title=ep.title, status=1,
-        auto_schedule=ep.auto_schedule,
         translator=trans, proofreader=proof, typesetter=type_, supervisor=super_,
         ddl_trans=dt_trans, ddl_proof=dt_proof, ddl_type=dt_type, ddl_supervision=dt_super
     )
-    if ep.auto_schedule:
+    if project.auto_schedule:
         await initialize_episode_schedule(episode)
 
     msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
@@ -634,8 +634,6 @@ async def update_episode(id: int, form: EpisodeUpdate):
 
     ep.title = form.title
     ep.status = form.status
-    auto_schedule_was_enabled = ep.auto_schedule
-    ep.auto_schedule = form.auto_schedule
     ep.translator = new_trans
     ep.proofreader = new_proof
     ep.typesetter = new_type
@@ -645,9 +643,6 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.ddl_type = new_ddl_type
     ep.ddl_supervision = new_ddl_super
     await ep.save()
-
-    if form.auto_schedule and not auto_schedule_was_enabled:
-        await initialize_episode_schedule(ep)
 
     if changes:
         msg = Message(f"📢 注意！[{ep.project.name} {ep.title}] 情报有变：\n")
