@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
 import unicodedata
@@ -113,6 +113,10 @@ class EpisodeEnsure(BaseModel):
     group_id: str
 
 # --- Helpers ---
+def get_episode_default_deadlines(now: Optional[datetime] = None) -> tuple[datetime, datetime, datetime, datetime]:
+    base_time = now or datetime.now()
+    return tuple(base_time + timedelta(weeks=weeks) for weeks in (2, 4, 6, 8))
+
 async def get_db_user(qq, group_id):
     if not qq: return None
     return await User.get_or_none(qq_id=str(qq), group_id=str(group_id))
@@ -488,7 +492,26 @@ async def ensure_episode(form: EpisodeEnsure):
             "episode_id": episode.id,
         }
 
-    episode = await Episode.create(project=project, title=form.title, status=1)
+    await project.fetch_related(
+        "default_translator",
+        "default_proofreader",
+        "default_typesetter",
+        "default_supervisor",
+    )
+    ddl_trans, ddl_proof, ddl_type, ddl_supervision = get_episode_default_deadlines()
+    episode = await Episode.create(
+        project=project,
+        title=form.title,
+        status=1,
+        translator=project.default_translator,
+        proofreader=project.default_proofreader,
+        typesetter=project.default_typesetter,
+        supervisor=project.default_supervisor,
+        ddl_trans=ddl_trans,
+        ddl_proof=ddl_proof,
+        ddl_type=ddl_type,
+        ddl_supervision=ddl_supervision,
+    )
     await send_group_message(
         int(group_id),
         Message(f"📦 掉落新任务：{project.name} {episode.title}\n✍️ 翻译未分锅"),

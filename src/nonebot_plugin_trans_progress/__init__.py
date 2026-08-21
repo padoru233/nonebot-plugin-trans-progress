@@ -1,12 +1,14 @@
 import asyncio
 import os
 import random
+import re
 
-from nonebot import on_command, require, get_driver, logger, get_plugin_config, get_asgi
+from nonebot import get_asgi, get_driver, get_plugin_config, logger, on_command, on_message, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
+from nonebot.rule import Rule
 from tortoise import Tortoise
 from tortoise.queryset import Q
 
@@ -199,25 +201,40 @@ async def _(matcher: Matcher):
 
 # 2. 完成指令
 cmd_finish = on_command("完成", aliases={"done", "交稿"}, priority=5, block=True)
+FINISH_KEYWORD_PATTERN = re.compile(r"^(.+?)\s+(\S+)\s+好了[！!。]?$", re.DOTALL)
 
-@cmd_finish.handle()
-async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    msg = args.extract_plain_text().strip().split()
-    if len(msg) < 2:
-        await finish_image(matcher, "指令格式不正确", [RenderModule("请这样输入", ["完成 <项目名> <话数>"])])
 
-    proj_input, ep_input = msg[0], msg[1]
+def parse_finish_keyword(message: Message) -> tuple[str, str] | None:
+    match = FINISH_KEYWORD_PATTERN.fullmatch(message.extract_plain_text().strip())
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+async def is_finish_keyword(event: GroupMessageEvent) -> bool:
+    return isinstance(event, GroupMessageEvent) and parse_finish_keyword(event.get_message()) is not None
+
+
+async def handle_episode_completion(
+    matcher: Matcher,
+    bot: Bot,
+    event: GroupMessageEvent,
+    proj_input: str,
+    ep_input: str,
+):
     qq_id = str(event.user_id)
 
     # 1. 智能查找项目
     project = await find_project(proj_input, str(event.group_id))
     if not project:
         await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [proj_input])])
+    assert project is not None
 
     # 2. 智能查找话数
     episode = await find_episode(project, ep_input)
     if not episode:
         await finish_image(matcher, "未找到任务", [RenderModule(project.name, [ep_input])])
+    assert episode is not None
 
     # 3. 权限检查
     current_status = episode.status
@@ -328,7 +345,27 @@ async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message 
     if target_qq:
         reply += MessageSegment.at(target_qq)
     await send_group_message(int(event.group_id), reply, bot=bot)
+
+@cmd_finish.handle()
+async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    msg = args.extract_plain_text().strip().split()
+    if len(msg) < 2:
+        await finish_image(matcher, "指令格式不正确", [RenderModule("请这样输入", ["完成 <项目名> <话数>"])])
+
+    proj_input, ep_input = msg[0], msg[1]
+    await handle_episode_completion(matcher, bot, event, proj_input, ep_input)
     await cmd_finish.finish()
+
+
+keyword_finish = on_message(rule=Rule(is_finish_keyword), priority=6, block=True)
+
+
+@keyword_finish.handle()
+async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
+    parsed = parse_finish_keyword(event.get_message())
+    if parsed:
+        await handle_episode_completion(matcher, bot, event, *parsed)
+    await keyword_finish.finish()
 
 
 # 3. 查看指令

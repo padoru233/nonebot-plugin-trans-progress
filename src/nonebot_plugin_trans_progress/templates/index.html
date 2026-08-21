@@ -10,36 +10,34 @@
         /* === 视觉主题与基础布局 === */
         :root {
             --el-font-size-base: 16px !important;
-            --ink: #26364a;
-            --muted-ink: #6e7b8f;
-            --paper: #fffdf9;
-            --canvas: #f6f8ff;
-            --line: #dfe6f4;
-            --accent: #ef7394;
-            --accent-deep: #d9587d;
-            --sky: #61b6d9;
+            --ink: #1f2937;
+            --muted-ink: #64748b;
+            --paper: #ffffff;
+            --canvas: #f4f7fb;
+            --line: #d8e1ec;
+            --accent: #db5d77;
+            --accent-deep: #b9415c;
+            --navy: #183b5b;
+            --warning: #d97706;
         }
 
         body {
             margin: 0;
-            font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-            background-color: var(--canvas);
-            background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(225deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(315deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%), linear-gradient(45deg, rgba(255, 255, 255, 0.76) 25%, transparent 25%);
-            background-position: 12px 0, 12px 0, 0 0, 0 0;
-            background-size: 24px 24px;
+            font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+            background: linear-gradient(120deg, #f7fafc 0%, #edf4f9 52%, #f8f5f2 100%);
             font-size: 16px;
             color: var(--ink);
         }
 
         .header {
-            background: rgba(255, 253, 249, 0.94);
-            border-bottom: 2px solid #f5c5d1;
+            background: rgba(255, 255, 255, 0.94);
+            border-bottom: 1px solid var(--line);
             padding: 0 clamp(16px, 4vw, 56px);
             height: 68px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 4px 16px rgba(74, 101, 138, 0.10);
+            box-shadow: 0 4px 20px rgba(24, 59, 91, 0.08);
             position: sticky;
             top: 0;
             z-index: 100;
@@ -47,7 +45,7 @@
         }
 
         .header .title {
-            color: var(--accent-deep);
+            color: var(--navy);
             font-size: 21px;
             font-weight: 700;
             display: flex;
@@ -66,10 +64,10 @@
         .el-tabs__header {
             margin: 0 0 18px;
             padding: 6px 8px 0;
-            background: rgba(255, 253, 249, 0.92);
+            background: rgba(255, 255, 255, 0.86);
             border: 1px solid var(--line);
             border-radius: 8px;
-            box-shadow: 0 6px 18px rgba(74, 101, 138, 0.07);
+            box-shadow: none;
         }
 
         .el-tabs__nav-wrap::after { display: none; }
@@ -87,12 +85,11 @@
         .member-toolbar {
             background: var(--paper);
             border: 1px solid var(--line);
-            border-top: 3px solid #f5c5d1;
             border-radius: 8px;
-            box-shadow: 0 8px 20px rgba(74, 101, 138, 0.08);
+            box-shadow: 0 8px 20px rgba(24, 59, 91, 0.07);
         }
 
-        .workspace-toolbar { padding: 18px; margin-bottom: 18px; }
+        .workspace-toolbar { padding: 18px; margin-bottom: 18px; box-shadow: none; }
         .member-toolbar { padding: 14px; margin-bottom: 14px; }
 
         .workspace-toolbar .el-button--primary,
@@ -103,11 +100,11 @@
             --el-button-hover-border-color: var(--accent-deep);
         }
 
-        .project-list { display: grid; gap: 12px; }
+        .project-list { display: grid; gap: 14px; }
         .el-collapse { border: 0; }
-        .el-collapse-item { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--paper); box-shadow: 0 5px 16px rgba(74, 101, 138, 0.06); }
-        .el-collapse-item__header { border: 0; background: transparent; padding: 11px 16px; }
-        .el-collapse-item__wrap { border: 0; background: #fbfcff; }
+        .el-collapse-item { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--paper); box-shadow: 0 5px 16px rgba(24, 59, 91, 0.06); }
+        .el-collapse-item__header { border: 0; background: transparent; padding: 13px 16px; }
+        .el-collapse-item__wrap { border: 0; background: #fbfdff; }
         .el-collapse-item__content { padding: 10px 16px 16px; }
 
         .project-header {
@@ -128,6 +125,38 @@
         }
 
         .project-info > span:first-child { color: var(--ink); font-size: 17px; }
+
+        .current-progress {
+            --progress-color: #409eff;
+            display: inline-flex;
+            align-items: center;
+            min-height: 25px;
+            padding: 0 9px;
+            border: 1px solid var(--progress-color) !important;
+            border-radius: 5px;
+            background: #fff !important;
+            color: var(--progress-color) !important;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 0;
+        }
+
+        .current-progress::before {
+            width: 6px;
+            height: 6px;
+            margin-right: 5px;
+            border-radius: 50%;
+            background: currentColor;
+            content: "";
+        }
+
+        .toolbar-label { display: block; margin: 0 0 7px 2px; color: var(--muted-ink); font-size: 12px; font-weight: 700; }
+        .filter-toggle { display: flex; align-items: center; min-height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: #fafcff; }
+        .filter-toggle.warning { border-color: #f4c978; background: #fff9ed; }
+        .episode-table .el-table__row.needs-assignment-row > td.el-table__cell { background: #fffaf0 !important; }
+        .episode-title { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+        .assignment-alert { margin: 0 0 8px; color: #9a5a00; font-size: 12px; font-weight: 700; }
+        .assignment-alert .el-icon { vertical-align: -2px; margin-right: 3px; }
 
         .stage-box {
             background: #ffffff;
@@ -258,11 +287,11 @@
             border: 1px solid var(--line);
             border-radius: 8px;
             background: var(--paper);
-            box-shadow: 0 8px 20px rgba(74, 101, 138, 0.08);
+            box-shadow: 0 8px 20px rgba(24, 59, 91, 0.07);
         }
 
         .settings-panel .el-alert { margin-bottom: 16px !important; }
-        .el-table { --el-table-header-bg-color: #f3f7ff; --el-table-border-color: #dfe6f4; --el-table-row-hover-bg-color: #fff4f7; }
+        .el-table { --el-table-header-bg-color: #eef4f8; --el-table-border-color: var(--line); --el-table-row-hover-bg-color: #f8fbfd; }
 
         @media (max-width: 768px) {
             .header {
@@ -294,6 +323,7 @@
             .project-info > span:first-child { width: 100%; }
             .project-header { align-items: flex-start; }
             .project-header > div:last-child { margin-left: auto; margin-right: 0 !important; }
+            .filter-toggle { margin-top: 5px; }
         }
 
         .status-tag-0 {
@@ -371,16 +401,14 @@
                 <el-tabs v-model="activeTab" v-if="authorized">
                     <el-tab-pane label="项目列表" name="projects">
                         <div class="workspace-toolbar">
-                            <el-row :gutter="10" align="middle">
+                            <el-row :gutter="12" align="bottom">
                                 <el-col :span="6" :xs="24" style="margin-bottom:5px">
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        <el-input v-model="filters.keyword" placeholder="搜项目名/别名..."
-                                            prefix-icon="Search" clearable style="flex-grow: 1;"></el-input>
-                                        <el-checkbox v-model="filters.hideCompleted" label="隐藏完结" size="small"
-                                            style="margin: 0; white-space: nowrap;"></el-checkbox>
-                                    </div>
+                                    <span class="toolbar-label">项目搜索</span>
+                                    <el-input v-model="filters.keyword" placeholder="项目名称或别名"
+                                        prefix-icon="Search" clearable></el-input>
                                 </el-col>
                                 <el-col :span="6" :xs="12" style="margin-bottom:5px">
+                                    <span class="toolbar-label">项目标签</span>
                                     <el-select v-model="filters.tag" placeholder="项目标签" clearable filterable
                                         style="width:100%">
                                         <el-option v-for="t in allProjectTags" :key="t" :label="t"
@@ -388,6 +416,7 @@
                                     </el-select>
                                 </el-col>
                                 <el-col :span="6" :xs="12" style="margin-bottom:5px">
+                                    <span class="toolbar-label">参与成员</span>
                                     <div style="display: flex; align-items: center; gap: 5px;">
                                         <el-select v-model="filters.member" placeholder="参与人员(搜名/Tag)" clearable
                                             filterable :filter-method="filterMemberMethod"
@@ -409,7 +438,14 @@
                                     </div>
                                 </el-col>
                                 <el-col :span="6" :xs="24" style="text-align: right;">
+                                    <span class="toolbar-label" style="text-align: left;">显示选项</span>
+                                    <div style="display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;">
+                                    <div class="filter-toggle"><el-checkbox v-model="filters.hideCompleted" label="隐藏完结" size="small"
+                                        style="margin: 0; white-space: nowrap;"></el-checkbox></div>
+                                    <div class="filter-toggle warning"><el-checkbox v-model="filters.needsAssignment" label="待补翻/嵌" size="small"
+                                        style="margin: 0; white-space: nowrap;"></el-checkbox></div>
                                     <el-button type="primary" @click="openCreateProject" icon="Plus">新建项目</el-button>
+                                    </div>
                                 </el-col>
                             </el-row>
                         </div>
@@ -422,9 +458,9 @@
                                     <div class="project-header">
                                         <div class="project-info">
                                             <span>{{ p.name }}</span>
-                                            <el-tag v-if="getProjectProgress(p)" effect="dark" size="small"
-                                                :color="getProjectProgressColor(getProjectProgress(p).status)"
-                                                style="border: none; margin-right: 4px;">
+                                            <el-tag v-if="getProjectProgress(p)" effect="plain" size="small"
+                                                class="current-progress"
+                                                :style="{ '--progress-color': getProjectProgressColor(getProjectProgress(p).status) }">
                                                 {{ getProjectProgress(p).title }} {{
                                                 ['','翻译','校对','嵌字','监修'][getProjectProgress(p).status] || '' }}
                                             </el-tag>
@@ -450,8 +486,13 @@
                                 <div style="padding: 5px 0;">
                                     <el-button type="primary" plain size="default" @click="openAddEpisode(p)"
                                         style="width: 100%; margin-bottom: 10px;">+ 添加新话</el-button>
-                                    <el-table :data="getFilteredEpisodes(p)" border style="width: 100%">
-                                        <el-table-column prop="title" label="话数" width="70"></el-table-column>
+                                    <el-table :data="getFilteredEpisodes(p)" :row-class-name="episodeRowClassName"
+                                        class="episode-table" border style="width: 100%">
+                                        <el-table-column prop="title" label="话数" width="100">
+                                            <template #default="{row}">
+                                                <div class="episode-title">{{ row.title }}<el-tag v-if="needsAssignment(row)" type="warning" size="small">待补岗</el-tag></div>
+                                            </template>
+                                        </el-table-column>
                                         <el-table-column label="状态" width="75" align="center">
                                             <template #default="{row}">
                                                 <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status"
@@ -461,6 +502,7 @@
                                         </el-table-column>
                                         <el-table-column label="进度详情">
                                             <template #default="{row}">
+                                                <div v-if="needsAssignment(row)" class="assignment-alert"><el-icon><Warning /></el-icon>未安排：{{ missingAssignmentRoles(row).join('、') }}</div>
                                                 <div class="stage-box"
                                                     :class="{active: row.status===1, 'stage-1': row.status===1}"><span
                                                         class="label">翻</span><span class="user">{{ row.translator?.name
@@ -727,7 +769,7 @@
                 const activeCollapse = ref([]);
                 const dialogs = reactive({ login: false, project: false, episode: false, sync: false, member: false });
 
-                const filters = reactive({ keyword: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false });
+                const filters = reactive({ keyword: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false, needsAssignment: false });
                 const memberKeyword = ref('');
 
                 const forms = reactive({
@@ -902,6 +944,8 @@
                             if (!hasActive) return false;
                         }
 
+                        if (filters.needsAssignment && !p.episodes.some(needsAssignment)) return false;
+
                         return matchKw && matchTag && matchMem;
                     });
                 });
@@ -909,6 +953,7 @@
                 const getFilteredEpisodes = (p) => {
                     let result = p.episodes.filter(e => {
                         if (filters.hideCompleted && e.status === 5) return false;
+                        if (filters.needsAssignment && !needsAssignment(e)) return false;
                         if (filters.member && filters.onlyMyTurn) {
                             const qq = filters.member;
                             if (e.status === 1 && e.translator?.qq_id !== qq) return false;
@@ -930,6 +975,16 @@
                     }
                     return result;
                 };
+
+                const missingAssignmentRoles = (episode) => {
+                    const roles = [];
+                    if (!episode.translator) roles.push('翻译');
+                    if (!episode.typesetter) roles.push('嵌字');
+                    return roles;
+                };
+
+                const needsAssignment = (episode) => episode.status !== 5 && missingAssignmentRoles(episode).length > 0;
+                const episodeRowClassName = ({ row }) => needsAssignment(row) ? 'needs-assignment-row' : '';
 
                 const getProjectProgress = (p) => {
                     // 找到未完结中，数字最小的（这里假设id或者话数排序是期望的顺序，episodes通常按id排序，或者我们在后端按id排了）
@@ -984,7 +1039,8 @@
                     episodeSearchMap, onEpisodeMemberFilter, getFilteredEpisodeMembers,
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver,
-                    getFilteredEpisodes, getProjectProgress, getProjectProgressColor
+                    getFilteredEpisodes, getProjectProgress, getProjectProgressColor,
+                    missingAssignmentRoles, needsAssignment, episodeRowClassName
                 };
             }
         });
