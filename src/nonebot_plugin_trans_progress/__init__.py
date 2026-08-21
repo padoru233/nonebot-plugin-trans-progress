@@ -16,7 +16,8 @@ from tortoise.queryset import Q
 
 # Ensure these imports exist in your project structure
 from .models import Project, Episode, User
-from .utils import get_default_ddl, send_group_message
+from .utils import get_default_ddl
+from .notifications import notify_episode_completed
 from .scheduling import record_stage_completion
 from .web import api_router
 from .config import Config
@@ -24,7 +25,6 @@ from . import scheduler
 from .view_renderer import (
     AMBER_PALETTE,
     CORAL_PALETTE,
-    GREEN_PALETTE,
     LIGHT_BLUE_PALETTE,
     MINT_PALETTE,
     RenderModule,
@@ -425,11 +425,12 @@ async def handle_episode_completion(
         else:
             result_lines.append("下一阶段尚未分配负责人")
 
-    image = render_modules("任务完成", [RenderModule("处理结果", result_lines)], GREEN_PALETTE)[0]
-    reply = Message(MessageSegment.image(image))
-    if target_qq:
-        reply += MessageSegment.at(target_qq)
-    await send_group_message(int(event.group_id), reply, bot=bot)
+    await notify_episode_completed(
+        str(event.group_id),
+        result_lines,
+        {target_qq} if target_qq else set(),
+        bot,
+    )
 
 @cmd_finish.handle()
 async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):

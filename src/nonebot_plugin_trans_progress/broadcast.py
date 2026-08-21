@@ -2,10 +2,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nonebot import logger
-from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
 from .models import Episode, GroupSetting
-from .utils import send_group_message
+from .notifications import notify_deadline_broadcast
 
 BROADCAST_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
@@ -27,7 +26,8 @@ async def check_and_send_broadcast(
         project__group_id=group_id
     ).prefetch_related('project', 'translator', 'proofreader', 'typesetter', 'supervisor')
 
-    msg_list = []
+    lines = []
+    mentioned_qq_ids = set()
 
     for ep in active_eps:
         stage_name = ""
@@ -60,27 +60,19 @@ async def check_and_send_broadcast(
         elif ddl_date == today_date:
             prefix = "🔥 [就在今天!]"
 
-        # === 核心逻辑：不去重 At ===
-        line = Message(f"{prefix} [{ep.project.name} {ep.title}] ({stage_name}) ")
-
         if target_user:
-            line += MessageSegment.at(target_user.qq_id) + Message(" ")
+            mentioned_qq_ids.add(target_user.qq_id)
         else:
-            line += Message("👻 (还没人认领)")
-
-        line += Message("\n")
-        msg_list.append(line)
+            stage_name = f"{stage_name}, 未分配"
+        lines.append(f"{prefix} {ep.project.name} {ep.title} ({stage_name})")
 
     # 发送逻辑
-    if msg_list:
+    if lines:
         title = "🔔 这种事情不可以忘记哦" if is_manual else f"📅 早安！来看看今天的死线战士 ({now.strftime('%m-%d')})"
-        final_message = Message(f"{title}：\n")
-        for m in msg_list:
-            final_message += m
-
-        final_message += Message("\n大家的肝还好吗？做不完的话记得在群里喊一声哦~ 💪")
-        await send_group_message(int(group_id), final_message)
+        await notify_deadline_broadcast(group_id, title, lines, mentioned_qq_ids)
 
     elif is_manual:
         # 手动触发，但没有超期任务
-        await send_group_message(int(group_id), Message("☕ 居然没有要催的任务？大家休息一下吧~"))
+        await notify_deadline_broadcast(
+            group_id, "催更提醒", ["暂无到期或逾期任务"], set()
+        )

@@ -11,6 +11,13 @@ from nonebot.adapters.onebot.v11 import Message, MessageSegment, Bot
 
 from .models import Project, Episode, User, GroupSetting
 from .utils import get_default_ddl, send_group_message
+from .notifications import (
+    notify_episode_created,
+    notify_episode_manually_completed,
+    notify_episode_member_removed,
+    notify_episode_updated,
+    notify_project_created,
+)
 from .workflow import complete_episode
 from .scheduling import (
     STAGE_TIMING_FIELDS,
@@ -255,9 +262,7 @@ async def ensure_project_for_group(name: str, group_id: str):
         group_id=group_id,
         group_name=group_info.get("group_name", "未同步"),
     )
-    await send_group_message(
-        int(group_id), Message(f"🔨 挖到新坑啦！新坑开张：{project.name}\n✨ 大家加油！")
-    )
+    await notify_project_created(project, group_id)
     return project, True
 
 def ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
@@ -446,7 +451,7 @@ async def create_project(proj: ProjectCreate):
     d_type = await get_db_user(proj.default_typesetter_qq, gid)
     d_super = await get_db_user(proj.default_supervisor_qq, gid)
 
-    await Project.create(
+    project = await Project.create(
         name=proj.name,
         aliases=proj.aliases,
         tags=proj.tags,
@@ -456,23 +461,7 @@ async def create_project(proj: ProjectCreate):
         default_supervisor=d_super
     )
 
-    msg = Message(f"🔨 挖到新坑啦！新坑开张：{proj.name}")
-    if proj.aliases: msg += Message(f" (别名: {', '.join(proj.aliases)})")
-    if proj.tags: msg += Message(f"\n🏷️ 标签: {', '.join(proj.tags)}")
-    msg += Message("\n")
-
-    targets = []
-    if leader: targets.append((leader, "负责人"))
-    if d_trans: targets.append((d_trans, "默认翻译"))
-
-    seen_qq = set()
-    for user, role in targets:
-        if user.qq_id not in seen_qq:
-            msg += Message(f"{role}: ") + MessageSegment.at(user.qq_id) + Message(" ")
-            seen_qq.add(user.qq_id)
-    msg += Message("\n✨ 大家加油！")
-
-    await send_group_message(int(gid), msg)
+    await notify_project_created(project, gid, proj.aliases, proj.tags)
     return {"status": "success"}
 
 @api_router.post("/project/ensure")
@@ -533,10 +522,7 @@ async def ensure_episode(form: EpisodeEnsure):
         **default_assignees,
     )
     await initialize_episode_schedule(episode)
-    await send_group_message(
-        int(group_id),
-        Message(f"📦 掉落新任务：{project.name} {episode.title}\n✍️ 翻译未分锅"),
-    )
+    await notify_episode_created(project, episode, group_id)
     return {
         "status": "success",
         "created": True,
@@ -573,11 +559,7 @@ async def add_episode(ep: EpisodeCreate):
     if project.auto_schedule:
         await initialize_episode_schedule(episode)
 
-    msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
-    if trans: msg += Message("翻译就决定是你了！") + MessageSegment.at(trans.qq_id) + Message(" 冲鸭！")
-    else: msg += Message("✍️ 翻译未分锅")
-
-    await send_group_message(int(gid), msg)
+    await notify_episode_created(project, episode, gid)
     return {"status": "created"}
 
 @api_router.put("/episode/{id}")
@@ -645,16 +627,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
     await ep.save()
 
     if changes:
-        msg = Message(f"📢 注意！[{ep.project.name} {ep.title}] 情报有变：\n")
-        for idx, c in enumerate(changes, 1):
-            msg += Message(f"{idx}. {c}\n")
-
-        if mentions_qq:
-            for qid in mentions_qq:
-                msg += MessageSegment.at(qid) + Message(" ")
-            msg += Message("上面被点到的同学，请确认一下新的安排哦~ 👀")
-
-        await send_group_message(int(gid), msg)
+        await notify_episode_updated(ep.project, ep, gid, changes, mentions_qq)
 
     return {"status": "success"}
 
@@ -724,10 +697,7 @@ async def manually_complete_episode(form: ManualEpisodeCompletion):
         if getattr(episode, STAGE_TIMING_FIELDS[stage][1]) is None:
             await record_stage_completion(episode, stage)
     await episode.save()
-    await send_group_message(
-        int(project.group_id),
-        Message(f"🎆 [{project.name} {episode.title}] 已由萌翻管理员手动完结！"),
-    )
+    await notify_episode_manually_completed(project, episode, str(project.group_id))
     return {"status": "success", "episode_id": episode.id}
 
 @api_router.post("/episode/member/sync")
@@ -762,12 +732,8 @@ async def sync_member(form: MemberSynchronization):
             await episode.save()
 
     if form.action == "removed":
-        await send_group_message(
-            int(project.group_id),
-            Message(
-                f"📢 [{project.name} {episode.title}] 成员变动："
-                f"{form.user_name} 移出 {form.role}"
-            ),
+        await notify_episode_member_removed(
+            project, episode, str(project.group_id), form.user_name, form.role
         )
     return {
         "status": "success",

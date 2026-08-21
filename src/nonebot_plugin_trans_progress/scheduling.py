@@ -17,29 +17,36 @@ def deadline_from_start(start_time: datetime) -> datetime:
 
 
 async def initialize_episode_schedule(episode: Episode, now: datetime | None = None):
-    """Use the preceding episode's actual stage completion as each stage anchor."""
+    """Schedule only the oldest unfinished episode's current stage."""
     await episode.fetch_related("project")
     if not episode.project.auto_schedule:
+        return
+
+    current_episode = await Episode.filter(
+        project=episode.project, status__lt=5
+    ).order_by("id").first()
+    if current_episode is None or current_episode.id != episode.id:
+        return
+
+    stage = episode.status
+    if stage not in STAGE_TIMING_FIELDS:
         return
 
     base_time = now or datetime.now()
     previous_episodes = await Episode.filter(
         project=episode.project, id__lt=episode.id
     ).order_by("-id")
-
-    for stage, (started_field, completed_field, deadline_field) in (
-        STAGE_TIMING_FIELDS.items()
-    ):
-        start_time = next(
-            (
-                completed_at
-                for previous in previous_episodes
-                if (completed_at := getattr(previous, completed_field)) is not None
-            ),
-            base_time + STAGE_DURATION * (stage - 1),
-        )
-        setattr(episode, started_field, start_time)
-        setattr(episode, deadline_field, deadline_from_start(start_time))
+    started_field, completed_field, deadline_field = STAGE_TIMING_FIELDS[stage]
+    start_time = next(
+        (
+            completed_at
+            for previous in previous_episodes
+            if (completed_at := getattr(previous, completed_field)) is not None
+        ),
+        base_time,
+    )
+    setattr(episode, started_field, start_time)
+    setattr(episode, deadline_field, deadline_from_start(start_time))
 
     await episode.save()
 

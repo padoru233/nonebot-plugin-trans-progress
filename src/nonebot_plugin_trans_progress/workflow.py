@@ -1,9 +1,10 @@
 from typing import Optional
 
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot
 
 from .models import Episode
-from .utils import get_default_ddl, send_group_message
+from .notifications import notify_episode_completed
+from .utils import get_default_ddl
 from .scheduling import record_stage_completion
 
 
@@ -71,11 +72,10 @@ async def complete_episode(
 
     await episode.save()
 
-    reply = Message(
-        f"🎉 辛苦啦！[{episode.project.name} {episode.title}] {stage_name}搞定！✨\n"
-    )
+    result_lines = [f"{episode.project.name} {episode.title}", f"{stage_name}已完成"]
+    mentioned_qq_ids = set()
     if episode.status == 5:
-        reply += Message("🎆 撒花！全工序完结！")
+        result_lines.append("全部工序已完结，准备发布")
         target_qq = episode.project.leader.qq_id if episode.project.leader else None
         if not target_qq and bot:
             try:
@@ -89,11 +89,11 @@ async def complete_episode(
             except Exception:
                 pass
         if target_qq:
-            reply += Message("\n请 ") + MessageSegment.at(target_qq) + Message(" 查收，准备发布啦~ 🚀")
+            mentioned_qq_ids.add(target_qq)
         else:
-            reply += Message("\n请管理员查收发布")
+            result_lines.append("请管理员查收发布")
     else:
-        reply += Message(f"➡️ 进入 [{next_role}] 阶段\n")
+        result_lines.append(f"下一阶段: {next_role}")
         next_ddl = None
         if episode.status == 2:
             next_ddl = episode.ddl_proof
@@ -102,13 +102,11 @@ async def complete_episode(
         elif episode.status == 4:
             next_ddl = episode.ddl_supervision
         if next_ddl:
-            reply += Message(f"📅 死线: {next_ddl.strftime('%m-%d')}\n")
+            result_lines.append(f"截止日期: {next_ddl.strftime('%m-%d')}")
         if next_user:
-            reply += Message("接力棒交给你啦！") + MessageSegment.at(
-                next_user.qq_id
-            ) + Message(" 拜托了捏~ 🙏")
+            mentioned_qq_ids.add(next_user.qq_id)
         else:
-            reply += Message("⚠️ 哎呀，下一棒还没人接手！组长快来分锅！🍲")
+            result_lines.append("下一阶段尚未分配负责人")
 
-    await send_group_message(group_id, reply, bot=bot)
+    await notify_episode_completed(group_id, result_lines, mentioned_qq_ids, bot)
     return episode
