@@ -4,6 +4,7 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 
 from .models import Episode
 from .utils import get_default_ddl, send_group_message
+from .scheduling import record_stage_completion
 
 
 async def complete_episode(
@@ -48,6 +49,7 @@ async def complete_episode(
 
     next_role = ""
     next_user = None
+    await record_stage_completion(episode, current_status)
     if current_status == 1:
         episode.status = 2
         if not episode.ddl_proof:

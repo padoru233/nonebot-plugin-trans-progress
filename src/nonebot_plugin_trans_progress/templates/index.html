@@ -678,6 +678,11 @@
                     <el-form-item label="标题"><el-input v-model="forms.episode.title"
                             placeholder="输入标题"></el-input></el-form-item>
 
+                    <el-form-item label="排期">
+                        <el-switch v-model="forms.episode.auto_schedule" active-text="自动排期"
+                            inactive-text="手动排期"></el-switch>
+                    </el-form-item>
+
                     <el-form-item label="状态" v-if="forms.episode.id">
                         <el-radio-group v-model="forms.episode.status">
                             <el-radio-button :label="1">翻译</el-radio-button>
@@ -774,7 +779,7 @@
 
                 const forms = reactive({
                     project: { id: null, name: '', aliases: [], tags: [], group_id: '', leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
-                    episode: { id: null, project_name: '', title: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
+                    episode: { id: null, project_name: '', title: '', status: 0, auto_schedule: true, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
                     sync_group: '',
                     member: { id: null, name: '', tags: [] }
                 });
@@ -835,6 +840,7 @@
                         project_name: p.name,
                         title: '',
                         status: 1,
+                        auto_schedule: true,
                         translator_qq: p.defaults.trans,
                         proofreader_qq: p.defaults.proof,
                         typesetter_qq: p.defaults.type,
@@ -846,7 +852,7 @@
                     };
                     dialogs.episode = true;
                 };
-                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
+                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, auto_schedule: row.auto_schedule, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
                 const submitEpisode = async () => { const pl = { ...forms.episode };['translator_qq', 'proofreader_qq', 'typesetter_qq', 'supervisor_qq'].forEach(k => { if (!pl[k]) pl[k] = null }); try { if (pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
                 // === Member Logic ===

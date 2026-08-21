@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
 import unicodedata
@@ -12,6 +12,11 @@ from nonebot.adapters.onebot.v11 import Message, MessageSegment, Bot
 from .models import Project, Episode, User, GroupSetting
 from .utils import get_default_ddl, send_group_message
 from .workflow import complete_episode
+from .scheduling import (
+    STAGE_TIMING_FIELDS,
+    initialize_episode_schedule,
+    record_stage_completion,
+)
 from .config import Config
 from .broadcast import check_and_send_broadcast
 
@@ -54,6 +59,7 @@ class MemberUpdate(BaseModel):
 class EpisodeCreate(BaseModel):
     project_name: str
     title: str
+    auto_schedule: bool = True
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -66,6 +72,7 @@ class EpisodeCreate(BaseModel):
 class EpisodeUpdate(BaseModel):
     title: str
     status: int
+    auto_schedule: bool = True
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -113,9 +120,31 @@ class EpisodeEnsure(BaseModel):
     group_id: str
 
 # --- Helpers ---
-def get_episode_default_deadlines(now: Optional[datetime] = None) -> tuple[datetime, datetime, datetime, datetime]:
-    base_time = now or datetime.now()
-    return tuple(base_time + timedelta(weeks=weeks) for weeks in (2, 4, 6, 8))
+async def get_project_default_assignees(project: Project) -> dict[str, Optional[User]]:
+    await project.fetch_related(
+        "default_translator",
+        "default_proofreader",
+        "default_typesetter",
+        "default_supervisor",
+    )
+    return {
+        "translator": project.default_translator,
+        "proofreader": project.default_proofreader,
+        "typesetter": project.default_typesetter,
+        "supervisor": project.default_supervisor,
+    }
+
+async def apply_missing_default_assignees(
+    episode: Episode, default_assignees: dict[str, Optional[User]]
+) -> bool:
+    changed = False
+    for field_name, assignee in default_assignees.items():
+        if assignee and getattr(episode, f"{field_name}_id") is None:
+            setattr(episode, field_name, assignee)
+            changed = True
+    if changed:
+        await episode.save()
+    return changed
 
 async def get_db_user(qq, group_id):
     if not qq: return None
@@ -324,6 +353,7 @@ async def get_projects():
         for e in eps:
             ep_list.append({
                 "id": e.id, "title": e.title, "status": e.status,
+                "auto_schedule": e.auto_schedule,
                 "ddl_trans": e.ddl_trans, "ddl_proof": e.ddl_proof, "ddl_type": e.ddl_type,
                 "ddl_supervision": e.ddl_supervision,
                 "translator": {"name": e.translator.name, "qq_id": e.translator.qq_id} if e.translator else None,
@@ -484,7 +514,9 @@ async def ensure_episode(form: EpisodeEnsure):
     # 重复播报问题应通过让萌翻侧对已有项目集做一次性同步来解决，而不是在这里吞掉播报。
     project, project_created = await ensure_project_for_group(form.project_name, group_id)
     episode = await Episode.get_or_none(project=project, title=form.title)
+    default_assignees = await get_project_default_assignees(project)
     if episode:
+        await apply_missing_default_assignees(episode, default_assignees)
         return {
             "status": "success",
             "created": False,
@@ -492,26 +524,14 @@ async def ensure_episode(form: EpisodeEnsure):
             "episode_id": episode.id,
         }
 
-    await project.fetch_related(
-        "default_translator",
-        "default_proofreader",
-        "default_typesetter",
-        "default_supervisor",
-    )
-    ddl_trans, ddl_proof, ddl_type, ddl_supervision = get_episode_default_deadlines()
     episode = await Episode.create(
         project=project,
         title=form.title,
         status=1,
-        translator=project.default_translator,
-        proofreader=project.default_proofreader,
-        typesetter=project.default_typesetter,
-        supervisor=project.default_supervisor,
-        ddl_trans=ddl_trans,
-        ddl_proof=ddl_proof,
-        ddl_type=ddl_type,
-        ddl_supervision=ddl_supervision,
+        auto_schedule=True,
+        **default_assignees,
     )
+    await initialize_episode_schedule(episode)
     await send_group_message(
         int(group_id),
         Message(f"📦 掉落新任务：{project.name} {episode.title}\n✍️ 翻译未分锅"),
@@ -544,11 +564,14 @@ async def add_episode(ep: EpisodeCreate):
     dt_type = ensure_aware(ep.ddl_type)
     dt_super = ensure_aware(ep.ddl_supervision)
 
-    await Episode.create(
+    episode = await Episode.create(
         project=project, title=ep.title, status=1,
+        auto_schedule=ep.auto_schedule,
         translator=trans, proofreader=proof, typesetter=type_, supervisor=super_,
         ddl_trans=dt_trans, ddl_proof=dt_proof, ddl_type=dt_type, ddl_supervision=dt_super
     )
+    if ep.auto_schedule:
+        await initialize_episode_schedule(episode)
 
     msg = Message(f"📦 掉落新任务：{project.name} {ep.title}\n")
     if trans: msg += Message("翻译就决定是你了！") + MessageSegment.at(trans.qq_id) + Message(" 冲鸭！")
@@ -611,6 +634,8 @@ async def update_episode(id: int, form: EpisodeUpdate):
 
     ep.title = form.title
     ep.status = form.status
+    auto_schedule_was_enabled = ep.auto_schedule
+    ep.auto_schedule = form.auto_schedule
     ep.translator = new_trans
     ep.proofreader = new_proof
     ep.typesetter = new_type
@@ -620,6 +645,9 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.ddl_type = new_ddl_type
     ep.ddl_supervision = new_ddl_super
     await ep.save()
+
+    if form.auto_schedule and not auto_schedule_was_enabled:
+        await initialize_episode_schedule(ep)
 
     if changes:
         msg = Message(f"📢 注意！[{ep.project.name} {ep.title}] 情报有变：\n")
@@ -697,6 +725,9 @@ async def manually_complete_episode(form: ManualEpisodeCompletion):
         }
 
     episode.status = 5
+    for stage in range(1, 5):
+        if getattr(episode, STAGE_TIMING_FIELDS[stage][1]) is None:
+            await record_stage_completion(episode, stage)
     await episode.save()
     await send_group_message(
         int(project.group_id),

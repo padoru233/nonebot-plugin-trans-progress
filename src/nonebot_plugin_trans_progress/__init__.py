@@ -502,3 +502,20 @@ async def _(
 
         await send_view_images(matcher, project.name, lines)
         await cmd_view.finish()
+from .scheduling import record_stage_completion
+EPISODE_SCHEDULE_MIGRATION = """
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS auto_schedule BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_trans TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_proof TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_type TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_supervision TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_trans TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_proof TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_type TIMESTAMPTZ;
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS completed_supervision TIMESTAMPTZ;
+"""
+
+        if db_url.startswith(("postgres://", "postgresql://")):
+            connection = Tortoise.get_connection("default")
+            await connection.execute_script(EPISODE_SCHEDULE_MIGRATION)
+    await record_stage_completion(episode, current_status)
