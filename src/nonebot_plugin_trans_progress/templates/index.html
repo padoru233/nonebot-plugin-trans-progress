@@ -639,6 +639,10 @@
                             <el-option v-for="tag in allProjectTags" :key="tag" :label="tag" :value="tag"></el-option>
                         </el-select>
                     </el-form-item>
+                    <el-form-item label="再漫画">
+                        <el-input v-model="forms.project.zaimanhua_url"
+                            placeholder="https://manhua.zaimanhua.com/details/xxxxx"></el-input>
+                    </el-form-item>
                     <el-form-item label="绑定群" v-if="!forms.project.id">
                         <el-select v-model="forms.project.group_id" placeholder="选择已同步成员的群" filterable
                             style="width: 100%">
@@ -818,14 +822,14 @@
                 };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], group_id: '', auto_schedule: true, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
+                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
-                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], group_id: p.group_id, auto_schedule: p.auto_schedule, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
+                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
-                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags') delete pl[k] });
+                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url') delete pl[k] });
                     try { if (pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
                 };
                 const handleDelProject = async (p) => { if (confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); } };

@@ -16,6 +16,8 @@ class Project(models.Model):
     name = fields.CharField(max_length=100, unique=True)
     aliases = fields.JSONField(default=list)
     tags = fields.JSONField(default=list)
+    cover_url = fields.CharField(max_length=2048, null=True)
+    zaimanhua_url = fields.CharField(max_length=2048, null=True)
 
     group_id = fields.CharField(max_length=20)
     group_name = fields.CharField(max_length=100, null=True)

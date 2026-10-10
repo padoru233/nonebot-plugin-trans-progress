@@ -16,10 +16,15 @@ from tortoise.queryset import Q
 
 # Ensure these imports exist in your project structure
 from .models import Project, Episode, User
+from .catalog_store import (
+    flush_public_catalog,
+    generate_public_catalog,
+    is_catalog_generation_enabled,
+)
 from .utils import get_default_ddl
 from .notifications import notify_episode_completed
 from .scheduling import record_stage_completion
-from .web import api_router
+from .web import api_router, public_router
 from .config import Config
 from . import scheduler
 from .view_renderer import (
@@ -45,6 +50,8 @@ MODELS_PATH = [f"{__name__}.models"]
 
 SCHEDULE_MIGRATION = """
 ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS auto_schedule BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS cover_url VARCHAR(2048);
+ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS zaimanhua_url VARCHAR(2048);
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_trans TIMESTAMPTZ;
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_proof TIMESTAMPTZ;
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_type TIMESTAMPTZ;
@@ -83,6 +90,8 @@ async def init_db():
         if db_url.startswith(("postgres://", "postgresql://")):
             connection = Tortoise.get_connection("default")
             await connection.execute_script(SCHEDULE_MIGRATION)
+        if is_catalog_generation_enabled():
+            await generate_public_catalog(force_sync=True)
         logger.info("数据库连接成功！")
     except Exception as e:
         logger.error(f"数据库连接失败: {e}")
@@ -91,6 +100,7 @@ async def init_db():
 @driver.on_shutdown
 async def close_db():
     logger.info("正在关闭数据库连接...")
+    await flush_public_catalog()
     await Tortoise.close_connections()
 
 @driver.on_startup
@@ -119,6 +129,7 @@ async def init_web():
 
     # 挂载 web.py 的 API 路由 (自带锁)
     sub_app.include_router(api_router)
+    sub_app.include_router(public_router)
 
     logger.opt(colors=True).info(f"正在挂载 Web 后台到 <y>/trans</y> ...")
 

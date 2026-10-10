@@ -3,7 +3,8 @@ from typing import List, Optional, Dict, Set
 from collections import defaultdict
 import unicodedata
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from nonebot import get_bots, logger, get_plugin_config
@@ -26,6 +27,8 @@ from .scheduling import (
 )
 from .config import Config
 from .broadcast import check_and_send_broadcast
+from .catalog_store import get_or_generate_public_catalog, mark_public_catalog_dirty
+from .zaimanhua import ZaiManhuaMetadataError, get_metadata
 
 
 plugin_config = get_plugin_config(Config)
@@ -36,12 +39,46 @@ async def verify_token(x_auth_token: str = Header(..., alias="X-Auth-Token")):
     return x_auth_token
 
 api_router = APIRouter(dependencies=[Depends(verify_token)])
+public_router = APIRouter()
+
+
+def get_public_catalog_allowed_origins() -> set[str]:
+    origin = plugin_config.trans_public_catalog_allow_origin
+    origins = {origin}
+    if origin == "https://keli.love":
+        origins.add("https://www.keli.love")
+    return origins
+
+
+@public_router.get("/catalog.json")
+async def get_catalog(request: Request):
+    if not plugin_config.trans_public_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Public catalog is disabled")
+
+    cache_seconds = plugin_config.trans_public_catalog_cache_seconds
+    cdn_cache_seconds = plugin_config.trans_public_catalog_cdn_cache_seconds
+    headers = {
+        "Cache-Control": (
+            f"public, max-age={cache_seconds}, s-maxage={cdn_cache_seconds}, "
+            f"stale-while-revalidate={cdn_cache_seconds * 2}"
+        )
+    }
+    origin = request.headers.get("origin")
+    if origin in get_public_catalog_allowed_origins():
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
+    return FileResponse(
+        await get_or_generate_public_catalog(),
+        media_type="application/json",
+        headers=headers,
+    )
 
 # --- Pydantic Models ---
 class ProjectCreate(BaseModel):
     name: str
     aliases: List[str] = []
     tags: List[str] = []
+    zaimanhua_url: Optional[str] = None
     group_id: str
     auto_schedule: bool = True
     leader_qq: Optional[str] = None
@@ -54,6 +91,7 @@ class ProjectUpdate(BaseModel):
     name: str
     aliases: List[str] = []
     tags: List[str] = []
+    zaimanhua_url: Optional[str] = None
     auto_schedule: bool = True
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
@@ -380,6 +418,7 @@ async def get_projects():
             "name": p.name,
             "aliases": p.aliases,
             "tags": p.tags,
+            "zaimanhua_url": p.zaimanhua_url,
             "group_id": p.group_id,
             "group_name": real_group_name,
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
@@ -450,11 +489,19 @@ async def create_project(proj: ProjectCreate):
     d_proof = await get_db_user(proj.default_proofreader_qq, gid)
     d_type = await get_db_user(proj.default_typesetter_qq, gid)
     d_super = await get_db_user(proj.default_supervisor_qq, gid)
+    metadata = None
+    if proj.zaimanhua_url:
+        try:
+            metadata = await get_metadata(proj.zaimanhua_url)
+        except ZaiManhuaMetadataError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     project = await Project.create(
         name=proj.name,
         aliases=proj.aliases,
         tags=proj.tags,
+        cover_url=metadata.cover_url if metadata else None,
+        zaimanhua_url=metadata.detail_url if metadata else None,
         auto_schedule=proj.auto_schedule,
         group_id=gid, group_name=g_name, leader=leader,
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type,
@@ -478,6 +525,16 @@ async def update_project(id: int, form: ProjectUpdate):
     p.name = form.name
     p.aliases = form.aliases
     p.tags = form.tags
+    if form.zaimanhua_url:
+        try:
+            metadata = await get_metadata(form.zaimanhua_url)
+        except ZaiManhuaMetadataError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        p.zaimanhua_url = metadata.detail_url
+        p.cover_url = metadata.cover_url
+    else:
+        p.zaimanhua_url = None
+        p.cover_url = None
     p.auto_schedule = form.auto_schedule
 
     p.leader = await get_db_user(form.leader_qq, gid)
@@ -744,6 +801,7 @@ async def sync_member(form: MemberSynchronization):
 @api_router.delete("/episode/{id}")
 async def delete_episode(id: int):
     await Episode.filter(id=id).delete()
+    mark_public_catalog_dirty()
     return {"status": "success"}
 
 @api_router.put("/member/{id}")

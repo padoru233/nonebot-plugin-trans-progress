@@ -99,6 +99,12 @@
 | :-----: | :---: | :----: | :------: |
 | TRANS_DB_URL |  是   |   无   | 见下 |
 | TRANS_AUTH_PASSWORD |  是   |   admin   | Web访问密码 |
+| TRANS_PUBLIC_CATALOG_ENABLED | 否 | `false` | 是否开放无鉴权的漫画进度目录 JSON |
+| TRANS_PUBLIC_CATALOG_ALLOW_ORIGIN | 否 | `https://keli.love` | 可跨域读取目录的前端来源 |
+| TRANS_PUBLIC_CATALOG_CACHE_SECONDS | 否 | `60` | 浏览器缓存目录的秒数 |
+| TRANS_PUBLIC_CATALOG_CDN_CACHE_SECONDS | 否 | `300` | CDN 缓存目录的秒数 |
+| TRANS_PUBLIC_CATALOG_SYNC_URL | 否 | 无 | Makers 私有目录同步接口 URL |
+| TRANS_PUBLIC_CATALOG_SYNC_TOKEN | 否 | 无 | Makers 私有目录同步接口的 Bearer Token |
 - 数据库链接格式: `postgres://用户名:密码@地址:端口/数据库名` 例如：`postgres://postgres:password@127.0.0.1:5432/trans_db`
 - 使用驱动器 `DRIVER=~fastapi`或者`DRIVER=~quart`
 
@@ -126,6 +132,32 @@
 对接 Moeflow 时，请在 Moeflow 中填写上述 Bot 后台地址；Bot 侧无需配置 Moeflow URL。
 
 使用 `TRANS_AUTH_PASSWORD` 登录后，可新建项目和话数、分配成员、设置截止日期，以及管理每日播报。
+
+### 公开进度目录
+
+将 `TRANS_PUBLIC_CATALOG_ENABLED=true` 写入 `.env` 后，插件会开放无鉴权接口
+`/trans/catalog.json`。例如站点通过 CDN 暴露该路径时，前端可读取
+`https://bot.keli.love/trans/catalog.json`。
+
+接口返回每个项目的漫画名、别称、标签、最早的未完结话数、全部未完结话数、
+工序进度、话数统计和最后更新时间。可在项目设置中填写再漫画详情地址，例如
+`https://manhua.zaimanhua.com/details/84456`；插件会从再漫画公开详情 API 获取封面，
+并在目录 JSON 中以 `coverUrl` 与 `detailUrl` 输出，便于网页渲染卡片和跳转。不包含群号、成员信息或管理凭据。默认只允许
+`https://keli.love` 与 `https://www.keli.love` 跨域读取。若部署域名不同，请通过
+`TRANS_PUBLIC_CATALOG_ALLOW_ORIGIN` 显式修改允许来源。
+
+目录会在 Bot 启动时生成至插件本地数据目录的 `catalog.json`，项目或话数发生变更后会
+合并为一次静态文件重建。访问 `/trans/catalog.json` 时仅读取该文件，不再查询数据库；
+响应会同时设置浏览器缓存 `max-age`、CDN 缓存 `s-maxage` 和
+`stale-while-revalidate`。默认情况下，浏览器缓存 60 秒，CDN 缓存 300 秒。
+
+若配置 `TRANS_PUBLIC_CATALOG_SYNC_URL` 与
+`TRANS_PUBLIC_CATALOG_SYNC_TOKEN`，每次静态目录成功重建后，插件会以 HTTPS POST
+将该 JSON 同步到 Makers 私有接口。Bot 只在目录变更时发起一次同步，访客读取可改由
+Makers Blob 提供，不再访问 Bot。同步地址必须以 `https://` 开头；插件不会将 Token
+发送到明文 HTTP 地址。使用 Makers 后建议设置
+`TRANS_PUBLIC_CATALOG_ENABLED=false`，以关闭 Bot 的 `/trans/catalog.json` 公开接口；
+已配置同步地址时，静态目录仍会在启动和项目/话数变更后生成并同步到 Makers。
 
 ### 🎨 效果图
 如果有效果图的话
