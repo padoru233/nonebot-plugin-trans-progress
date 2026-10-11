@@ -371,6 +371,12 @@
             margin-right: 4px;
             vertical-align: middle;
         }
+
+        /* 删除确认框里的说明分行显示 */
+        .el-message-box__message p {
+            white-space: pre-line;
+            line-height: 1.6;
+        }
     </style>
 </head>
 
@@ -531,9 +537,13 @@
                                                         fmtDate(row.ddl_supervision) }}</span></div>
                                             </template>
                                         </el-table-column>
-                                        <el-table-column width="60" align="center" fixed="right">
-                                            <template #default="{row}"><el-button size="small" icon="Edit" circle
-                                                    @click="openEditEpisode(row, p)"></el-button></template>
+                                        <el-table-column width="100" align="center" fixed="right">
+                                            <template #default="{row}">
+                                                <el-button size="small" icon="Edit" circle
+                                                    @click="openEditEpisode(row, p)"></el-button>
+                                                <el-button size="small" type="danger" plain icon="Delete" circle
+                                                    title="删除这一话" @click="handleDelEpisode(row, p)"></el-button>
+                                            </template>
                                         </el-table-column>
                                     </el-table>
                                 </div>
@@ -849,9 +859,32 @@
                     const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url' && k != 'standalone_episodes') delete pl[k] });
                     try { if (pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
                 };
-                const handleDelProject = async (p) => { if (confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); } };
+                const confirmDelete = (message, title, confirmButtonText) => ElementPlus.ElMessageBox.confirm(message, title, {
+                    type: 'warning', confirmButtonText, cancelButtonText: '取消', confirmButtonClass: 'el-button--danger',
+                    dangerouslyUseHTMLString: false, distinguishCancelAndClose: true, autofocus: false
+                }).then(() => true, () => false);
+                const handleDelProject = async (p) => {
+                    const count = (p.episodes || []).length;
+                    const ok = await confirmDelete(
+                        `将删除作品集「${p.name}」及其下全部 ${count} 话的进度和人员安排，无法恢复。`
+                        + '\n如果萌翻里仍有同名项目集，之后同步时会重新创建一个空的作品集。',
+                        '删除作品集', '确认删除');
+                    if (!ok) return;
+                    try { await axios.delete(`${API}/project/${p.id}`); ElementPlus.ElMessage.success('已删除'); fetchData(); }
+                    catch (e) { ElementPlus.ElMessage.error('删除失败: ' + (e.response?.data?.detail || e.message)); }
+                };
 
                 // === Episode Logic ===
+                const handleDelEpisode = async (row, p) => {
+                    const inProgress = row.status >= 1 && row.status <= 4;
+                    const ok = await confirmDelete(
+                        `将删除「${p.name}」的「${row.title}」，包括它的进度和人员安排，无法恢复。`
+                        + (inProgress ? '\n这一话还在进行中，请确认不是误点。' : ''),
+                        '删除话数', '确认删除');
+                    if (!ok) return;
+                    try { await axios.delete(`${API}/episode/${row.id}`); ElementPlus.ElMessage.success('已删除'); fetchData(); }
+                    catch (e) { ElementPlus.ElMessage.error('删除失败: ' + (e.response?.data?.detail || e.message)); }
+                };
                 const openAddEpisode = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
                     currentEditingProjectStandalone.value = !!p.standalone_episodes;
@@ -1058,7 +1091,7 @@
                     loading, authorized, authPassword, handleLogin, logout,
                     activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB, settingsList,
                     dialogs, forms, stages, filters, memberKeyword,
-                    openCreateProject, openEditProject, submitProject, handleDelProject,
+                    openCreateProject, openEditProject, submitProject, handleDelProject, handleDelEpisode,
                     openAddEpisode, openEditEpisode, submitEpisode,
                     submitSync, openEditMember, submitMember, handleDelMember,
                     handleSettingChange, handleRemindNow,
