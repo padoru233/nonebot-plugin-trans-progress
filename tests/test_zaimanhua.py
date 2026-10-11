@@ -29,11 +29,24 @@ def test_get_cover_url_accepts_zaimanhua_webpic():
     from nonebot_plugin_trans_progress.zaimanhua import get_cover_url
 
     payload = {
+        "errno": 0,
         "data": {
             "comicInfo": {
                 "cover": "https://images.zaimanhua.com/webpic/8/example.jpg"
             }
-        }
+        },
     }
 
     assert get_cover_url(payload) == "https://images.zaimanhua.com/webpic/8/example.jpg"
+
+
+def test_get_cover_url_rejects_error_response():
+    from nonebot_plugin_trans_progress.zaimanhua import (
+        ZaiManhuaMetadataError,
+        get_cover_url,
+    )
+
+    payload = {"errno": 1, "errmsg": "not found", "data": {}}
+
+    with pytest.raises(ZaiManhuaMetadataError):
+        get_cover_url(payload)

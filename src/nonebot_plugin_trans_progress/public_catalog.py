@@ -14,6 +14,13 @@ STATUS_LABELS = {
     5: "已完结",
 }
 
+# 萌翻会把未归入作品集的话数同步到 default 作品集，它不是一部真实作品
+HIDDEN_PROJECT_NAMES = frozenset({"default"})
+
+
+def is_hidden_project(project: Any) -> bool:
+    return project.name.strip().casefold() in HIDDEN_PROJECT_NAMES
+
 
 def format_timestamp(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
@@ -29,6 +36,26 @@ def serialize_episode(episode: Any) -> dict[str, Any]:
     }
 
 
+def build_standalone_item(project: Any, episode: Any) -> dict[str, Any]:
+    """作品集开启“每话作为独立作品展示”时，每一话各自是一张卡片。"""
+    is_active = episode.status < 5
+    serialized_episode = serialize_episode(episode)
+    return {
+        "id": f"episode-{episode.id}",
+        "name": episode.title,
+        "aliases": [project.name],
+        "tags": project.tags,
+        "coverUrl": episode.cover_url,
+        "detailUrl": episode.zaimanhua_url,
+        "standalone": True,
+        "currentEpisode": serialized_episode if is_active else None,
+        "activeEpisodes": [serialized_episode] if is_active else [],
+        "episodeCount": 1,
+        "completedEpisodeCount": 0 if is_active else 1,
+        "updatedAt": format_timestamp(episode.updated_at),
+    }
+
+
 def build_catalog(
     projects: Iterable[Any],
     episodes: Iterable[Any],
@@ -40,7 +67,15 @@ def build_catalog(
 
     items = []
     for project in projects:
+        if is_hidden_project(project):
+            continue
         project_episodes = episodes_by_project[project.id]
+        if project.standalone_episodes:
+            items.extend(
+                build_standalone_item(project, episode)
+                for episode in sorted(project_episodes, key=lambda ep: ep.id)
+            )
+            continue
         active_episodes = [
             episode for episode in project_episodes if episode.status < 5
         ]

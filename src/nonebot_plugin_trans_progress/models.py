@@ -29,6 +29,8 @@ class Project(models.Model):
     default_typesetter = fields.ForeignKeyField('models.User', related_name='def_type_projects', null=True)
     default_supervisor = fields.ForeignKeyField('models.User', related_name='def_super_projects', null=True)
     auto_schedule = fields.BooleanField(default=True)
+    # 短篇集、单行本等：公开目录中每一话各自显示为一张卡片，而不是合并成一部作品
+    standalone_episodes = fields.BooleanField(default=False)
 
     class Meta:
         table = "trans_projects"
@@ -39,6 +41,9 @@ class Episode(models.Model):
     title = fields.CharField(max_length=50)
     # 状态定义: 0:未开始, 1:翻译, 2:校对, 3:嵌字, 4:监修, 5:完结
     status = fields.IntField(default=0)
+    # 作品集开启“每话作为独立作品展示”时，用于该话在公开目录中的封面和跳转
+    cover_url = fields.CharField(max_length=2048, null=True)
+    zaimanhua_url = fields.CharField(max_length=2048, null=True)
 
     translator = fields.ForeignKeyField('models.User', related_name='tasks_trans', null=True)
     proofreader = fields.ForeignKeyField('models.User', related_name='tasks_proof', null=True)

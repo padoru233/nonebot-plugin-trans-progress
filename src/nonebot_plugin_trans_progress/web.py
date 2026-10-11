@@ -81,6 +81,7 @@ class ProjectCreate(BaseModel):
     zaimanhua_url: Optional[str] = None
     group_id: str
     auto_schedule: bool = True
+    standalone_episodes: bool = False
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -93,6 +94,8 @@ class ProjectUpdate(BaseModel):
     tags: List[str] = []
     zaimanhua_url: Optional[str] = None
     auto_schedule: bool = True
+    # 为 None 表示调用方未提供，保持原值
+    standalone_episodes: Optional[bool] = None
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
     default_proofreader_qq: Optional[str] = None
@@ -106,6 +109,7 @@ class MemberUpdate(BaseModel):
 class EpisodeCreate(BaseModel):
     project_name: str
     title: str
+    zaimanhua_url: Optional[str] = None
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -118,6 +122,7 @@ class EpisodeCreate(BaseModel):
 class EpisodeUpdate(BaseModel):
     title: str
     status: int
+    zaimanhua_url: Optional[str] = None
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -197,6 +202,15 @@ async def get_db_user(qq, group_id):
 
 def normalize_project_identifier(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
+
+async def resolve_zaimanhua_link(url: Optional[str]):
+    """校验再漫画地址并取得封面；空值返回 None，失败时在保存前抛出 422。"""
+    if not url or not url.strip():
+        return None
+    try:
+        return await get_metadata(url.strip())
+    except ZaiManhuaMetadataError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 async def find_projects_by_name_or_alias(identifier: str) -> List[Project]:
     projects = await Project.all()
@@ -396,6 +410,7 @@ async def get_projects():
         for e in eps:
             ep_list.append({
                 "id": e.id, "title": e.title, "status": e.status,
+                "zaimanhua_url": e.zaimanhua_url,
                 "ddl_trans": e.ddl_trans, "ddl_proof": e.ddl_proof, "ddl_type": e.ddl_type,
                 "ddl_supervision": e.ddl_supervision,
                 "translator": {"name": e.translator.name, "qq_id": e.translator.qq_id} if e.translator else None,
@@ -423,6 +438,7 @@ async def get_projects():
             "group_name": real_group_name,
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
             "auto_schedule": p.auto_schedule,
+            "standalone_episodes": p.standalone_episodes,
             "defaults": defaults,
             "episodes": ep_list
         })
@@ -503,6 +519,7 @@ async def create_project(proj: ProjectCreate):
         cover_url=metadata.cover_url if metadata else None,
         zaimanhua_url=metadata.detail_url if metadata else None,
         auto_schedule=proj.auto_schedule,
+        standalone_episodes=proj.standalone_episodes,
         group_id=gid, group_name=g_name, leader=leader,
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type,
         default_supervisor=d_super
@@ -536,6 +553,8 @@ async def update_project(id: int, form: ProjectUpdate):
         p.zaimanhua_url = None
         p.cover_url = None
     p.auto_schedule = form.auto_schedule
+    if form.standalone_episodes is not None:
+        p.standalone_episodes = form.standalone_episodes
 
     p.leader = await get_db_user(form.leader_qq, gid)
     p.default_translator = await get_db_user(form.default_translator_qq, gid)
@@ -607,9 +626,12 @@ async def add_episode(ep: EpisodeCreate):
     dt_proof = ensure_aware(ep.ddl_proof)
     dt_type = ensure_aware(ep.ddl_type)
     dt_super = ensure_aware(ep.ddl_supervision)
+    metadata = await resolve_zaimanhua_link(ep.zaimanhua_url)
 
     episode = await Episode.create(
         project=project, title=ep.title, status=1,
+        zaimanhua_url=metadata.detail_url if metadata else None,
+        cover_url=metadata.cover_url if metadata else None,
         translator=trans, proofreader=proof, typesetter=type_, supervisor=super_,
         ddl_trans=dt_trans, ddl_proof=dt_proof, ddl_type=dt_type, ddl_supervision=dt_super
     )
@@ -624,6 +646,15 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter', 'supervisor')
     if not ep: raise HTTPException(404)
     gid = str(ep.project.group_id)
+
+    # 仅在请求带了该字段时才改动链接，避免其他调用方的 PUT 误清空；地址未变则不再请求再漫画
+    new_zaimanhua_url, new_cover_url = ep.zaimanhua_url, ep.cover_url
+    if "zaimanhua_url" in form.model_fields_set:
+        requested_url = (form.zaimanhua_url or "").strip()
+        if requested_url != (ep.zaimanhua_url or ""):
+            metadata = await resolve_zaimanhua_link(requested_url)
+            new_zaimanhua_url = metadata.detail_url if metadata else None
+            new_cover_url = metadata.cover_url if metadata else None
 
     new_trans = await get_db_user(form.translator_qq, gid)
     new_proof = await get_db_user(form.proofreader_qq, gid)
@@ -672,6 +703,8 @@ async def update_episode(id: int, form: EpisodeUpdate):
     check_role_change("监修", ep.supervisor, new_super, ep.ddl_supervision, new_ddl_super)
 
     ep.title = form.title
+    ep.zaimanhua_url = new_zaimanhua_url
+    ep.cover_url = new_cover_url
     ep.status = form.status
     ep.translator = new_trans
     ep.proofreader = new_proof

@@ -471,6 +471,8 @@
                                                 style="color:#67c23a; border-color:#e1f3d8; margin-right:4px">
                                                 <span class="tag-dot" style="background:#67c23a"></span>{{ tag }}
                                             </el-tag>
+                                            <el-tag v-if="p.standalone_episodes" size="small" type="warning"
+                                                effect="plain" style="margin-right:4px">每话独立展示</el-tag>
                                             <el-tag size="small" effect="plain">{{ (p.group_name && p.group_name !==
                                                 '未同步') ? (p.group_name + ' (' + p.group_id + ')') : p.group_id
                                                 }}</el-tag>
@@ -661,6 +663,13 @@
                         <el-switch v-model="forms.project.auto_schedule" active-text="自动排期"
                             inactive-text="手动排期"></el-switch>
                     </el-form-item>
+                    <el-form-item label="展示">
+                        <el-switch v-model="forms.project.standalone_episodes" active-text="每话作为独立作品展示"
+                            inactive-text="合并为一部作品"></el-switch>
+                        <div style="width: 100%; color: #909399; font-size: 12px; line-height: 1.5; margin-top: 4px;">
+                            适用于短篇集、单行本。开启后公开目录里每一话各占一张卡片，封面和跳转取自每话填写的再漫画地址。
+                        </div>
+                    </el-form-item>
                     <el-divider content-position="left">默认人员配置</el-divider>
                     <el-row :gutter="10">
                         <el-col :span="12"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译"
@@ -685,6 +694,13 @@
                 <el-form :model="forms.episode" label-width="50px" size="large">
                     <el-form-item label="标题"><el-input v-model="forms.episode.title"
                             placeholder="输入标题"></el-input></el-form-item>
+                    <el-form-item label="链接" v-if="currentEditingProjectStandalone">
+                        <el-input v-model="forms.episode.zaimanhua_url"
+                            placeholder="再漫画地址，如 https://manhua.zaimanhua.com/details/xxxxx"></el-input>
+                        <div style="width: 100%; color: #909399; font-size: 12px; margin-top: 4px;">
+                            该作品集每话独立展示，填写后自动获取这一话的封面；留空则显示“暂无封面”。
+                        </div>
+                    </el-form-item>
 
                     <el-form-item label="状态" v-if="forms.episode.id">
                         <el-radio-group v-model="forms.episode.status">
@@ -781,12 +797,13 @@
                 const memberKeyword = ref('');
 
                 const forms = reactive({
-                    project: { id: null, name: '', aliases: [], tags: [], group_id: '', auto_schedule: true, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
-                    episode: { id: null, project_name: '', title: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
+                    project: { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
+                    episode: { id: null, project_name: '', title: '', zaimanhua_url: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
                     sync_group: '',
                     member: { id: null, name: '', tags: [] }
                 });
                 const currentEditingProjectGroupId = ref('');
+                const currentEditingProjectStandalone = ref(false);
                 const memberSearch = ref('');
                 const filterGroup = ref('');
                 const stages = [
@@ -822,14 +839,14 @@
                 };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
+                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
-                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
+                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, standalone_episodes: !!p.standalone_episodes, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
-                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url') delete pl[k] });
+                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url' && k != 'standalone_episodes') delete pl[k] });
                     try { if (pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
                 };
                 const handleDelProject = async (p) => { if (confirm('确定删除?')) { await axios.delete(`${API}/project/${p.id}`); fetchData(); } };
@@ -837,11 +854,13 @@
                 // === Episode Logic ===
                 const openAddEpisode = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
+                    currentEditingProjectStandalone.value = !!p.standalone_episodes;
                     const now = new Date();
                     forms.episode = {
                         id: null,
                         project_name: p.name,
                         title: '',
+                        zaimanhua_url: '',
                         status: 1,
                         translator_qq: p.defaults.trans,
                         proofreader_qq: p.defaults.proof,
@@ -854,7 +873,7 @@
                     };
                     dialogs.episode = true;
                 };
-                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; forms.episode = { id: row.id, project_name: p.name, title: row.title, status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
+                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; currentEditingProjectStandalone.value = !!p.standalone_episodes; forms.episode = { id: row.id, project_name: p.name, title: row.title, zaimanhua_url: row.zaimanhua_url || '', status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
                 const submitEpisode = async () => { const pl = { ...forms.episode };['translator_qq', 'proofreader_qq', 'typesetter_qq', 'supervisor_qq'].forEach(k => { if (!pl[k]) pl[k] = null }); try { if (pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
                 // === Member Logic ===
@@ -1043,7 +1062,7 @@
                     openAddEpisode, openEditEpisode, submitEpisode,
                     submitSync, openEditMember, submitMember, handleDelMember,
                     handleSettingChange, handleRemindNow,
-                    computedProjectMembersForEdit, currentProjectMembers,
+                    computedProjectMembersForEdit, currentProjectMembers, currentEditingProjectStandalone,
                     episodeSearchMap, onEpisodeMemberFilter, getFilteredEpisodeMembers,
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver,
