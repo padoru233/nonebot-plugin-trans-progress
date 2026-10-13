@@ -172,6 +172,7 @@ class EpisodeEnsure(BaseModel):
 # --- Helpers ---
 async def get_project_default_assignees(project: Project) -> dict[str, Optional[User]]:
     await project.fetch_related(
+        "leader",
         "default_translator",
         "default_proofreader",
         "default_typesetter",
@@ -181,7 +182,7 @@ async def get_project_default_assignees(project: Project) -> dict[str, Optional[
         "translator": project.default_translator,
         "proofreader": project.default_proofreader,
         "typesetter": project.default_typesetter,
-        "supervisor": project.default_supervisor,
+        "supervisor": project.default_supervisor or project.leader,
     }
 
 async def apply_missing_default_assignees(
@@ -620,6 +621,9 @@ async def add_episode(ep: EpisodeCreate):
     proof = await get_db_user(ep.proofreader_qq, gid)
     type_ = await get_db_user(ep.typesetter_qq, gid)
     super_ = await get_db_user(ep.supervisor_qq, gid)
+    if super_ is None:
+        default_assignees = await get_project_default_assignees(project)
+        super_ = default_assignees["supervisor"]
 
     # 确保所有 datetime 都是 aware 的
     dt_trans = ensure_aware(ep.ddl_trans)
@@ -732,14 +736,14 @@ async def complete_episode_by_assignee(form: EpisodeCompletion):
     if form.role not in role_status:
         raise HTTPException(422, "不支持的任务角色")
 
-    status, assignee_field = role_status[form.role]
+    _, assignee_field = role_status[form.role]
     projects = await find_projects_by_name_or_alias(form.project_name)
     if not projects:
         raise HTTPException(404, "未找到匹配的项目或别名")
     if len(projects) > 1:
         raise HTTPException(409, "匹配到多个项目，无法确认要完成的项目")
     episode = await Episode.get_or_none(
-        project=projects[0], title=form.episode_title, status=status
+        project=projects[0], title=form.episode_title, status__lt=5
     ).prefetch_related(
         "project",
         "project__leader",
@@ -748,19 +752,24 @@ async def complete_episode_by_assignee(form: EpisodeCompletion):
         "typesetter",
         "supervisor",
     )
-    if not episode or not getattr(episode, assignee_field):
-        raise HTTPException(404, "未找到匹配的任务或负责人")
+    if not episode:
+        raise HTTPException(404, "未找到进行中的任务")
     assignee = getattr(episode, assignee_field)
-    if assignee.name != form.user_name:
-        raise HTTPException(403, "当前成员不是该工序负责人")
+    if not assignee or assignee.name != form.user_name:
+        raise HTTPException(403, "当前成员不是所提交工序的负责人")
     bot = await find_bot_for_group(str(episode.project.group_id))
-    await complete_episode(
-        episode,
-        assignee.qq_id,
-        assignee.name,
-        int(episode.project.group_id),
-        bot,
-    )
+    try:
+        await complete_episode(
+            episode,
+            assignee.qq_id,
+            assignee.name,
+            int(episode.project.group_id),
+            bot,
+        )
+    except PermissionError as error:
+        raise HTTPException(403, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
     return {"status": "success", "episode_id": episode.id}
 
 @api_router.post("/episode/manual-complete")

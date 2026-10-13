@@ -1,8 +1,15 @@
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 
-from .models import Episode, Project
 from .utils import send_group_message
-from .view_renderer import ColorPalette, MINT_PALETTE, RenderModule, render_modules
+from .models import Episode, Project
+from .view_renderer import MINT_PALETTE, ColorPalette, RenderModule, render_modules
+
+ROLE_NAMES = {
+    "translator": "翻译",
+    "proofreader": "校对",
+    "picture_editor": "嵌字",
+    "coordinator": "监修",
+}
 
 
 async def send_image_notification(
@@ -114,10 +121,15 @@ async def notify_episode_member_removed(
     project: Project, episode: Episode, group_id: str, user_name: str, role: str
 ) -> None:
     """Send a consistent notification for an episode member removal."""
+    role_name = ROLE_NAMES.get(role, role)
     await send_image_notification(
         group_id,
         "成员变动",
-        [RenderModule(f"{project.name} {episode.title}", [f"{user_name} 已移出 {role}"])],
+        [
+            RenderModule(
+                f"{project.name} {episode.title}", [f"{user_name} 已移出 {role_name}"]
+            )
+        ],
     )
 
 

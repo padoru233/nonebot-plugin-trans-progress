@@ -93,6 +93,7 @@ async def sync_public_catalog(serialized_catalog: str, item_count: int = 0) -> N
                 content=serialized_catalog.encode(),
                 headers={
                     "Authorization": f"Bearer {token}",
+                    "X-Catalog-Sync-Token": token,
                     "Content-Type": "application/json",
                 },
             )

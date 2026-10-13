@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import re
+from decimal import Decimal
 
 from arclet.alconna import Alconna, Args
 from nonebot import get_asgi, get_driver, get_plugin_config, logger, on_command, on_message, require
@@ -21,9 +22,7 @@ from .catalog_store import (
     generate_public_catalog,
     is_catalog_generation_enabled,
 )
-from .utils import get_default_ddl
-from .notifications import notify_episode_completed
-from .scheduling import record_stage_completion
+from .workflow import complete_episode
 from .web import api_router, public_router
 from .config import Config
 from . import scheduler
@@ -143,6 +142,7 @@ async def init_web():
 
 # === 辅助函数：按当前群查找项目 ===
 async def find_project(keyword: str, group_id: str) -> Project | None:
+    keyword = keyword.strip().casefold()
     needed_fields = [
         'leader',
         'default_translator',
@@ -161,14 +161,17 @@ async def find_project(keyword: str, group_id: str) -> Project | None:
 
     # 2. 项目名称精确匹配
     for project in all_projs:
-        if project.name == keyword:
+        if project.name.casefold() == keyword:
             return project
 
     # 3. 别称和标签精确匹配
     for project in all_projs:
         aliases = project.aliases if isinstance(project.aliases, list) else []
         tags = project.tags if isinstance(project.tags, list) else []
-        if keyword in aliases or keyword in tags:
+        if any(
+            isinstance(value, str) and value.casefold() == keyword
+            for value in [*aliases, *tags]
+        ):
             return project
 
     # 4. 名称、别称和标签模糊匹配
@@ -176,10 +179,58 @@ async def find_project(keyword: str, group_id: str) -> Project | None:
         aliases = proj.aliases if isinstance(proj.aliases, list) else []
         tags = proj.tags if isinstance(proj.tags, list) else []
         search_terms = [proj.name, *aliases, *tags]
-        if any(isinstance(term, str) and keyword in term for term in search_terms):
+        if any(
+            isinstance(term, str) and keyword in term.casefold()
+            for term in search_terms
+        ):
             return proj
 
     return None
+
+
+def match_project_query(
+    query: str, projects: list[Project]
+) -> tuple[Project, str | None] | None:
+    """Match a full project name/alias prefix and return the remaining episode text."""
+    query = query.strip()
+    normalized_query = query.casefold()
+    identifiers_by_project = []
+    for project in projects:
+        aliases = project.aliases if isinstance(project.aliases, list) else []
+        tags = project.tags if isinstance(project.tags, list) else []
+        identifiers = [project.name, *aliases, *tags]
+        identifiers_by_project.append((project, identifiers))
+
+    for project, identifiers in identifiers_by_project:
+        if project.name.casefold() == normalized_query:
+            return project, None
+
+    for project, identifiers in identifiers_by_project:
+        if any(
+            isinstance(identifier, str)
+            and identifier.casefold() == normalized_query
+            for identifier in identifiers[1:]
+        ):
+            return project, None
+
+    matches: list[tuple[int, Project, str]] = []
+    for project, identifiers in identifiers_by_project:
+        for identifier in identifiers:
+            if not isinstance(identifier, str) or not identifier:
+                continue
+            if not query[: len(identifier)].casefold() == identifier.casefold():
+                continue
+            if len(query) <= len(identifier) or not query[len(identifier)].isspace():
+                continue
+            episode_query = query[len(identifier) :].strip()
+            if episode_query:
+                matches.append((len(identifier), project, episode_query))
+
+    if not matches:
+        return None
+    _, project, episode_query = max(matches, key=lambda match: match[0])
+    return project, episode_query
+
 
 # === 辅助函数：智能查找话数 (FIXED) ===
 async def find_episode(project: Project, keyword: str) -> Episode | None:
@@ -195,6 +246,18 @@ async def find_episode(project: Project, keyword: str) -> Episode | None:
     ep = await Episode.get_or_none(project=project, title=keyword).prefetch_related(*needed_fields)
     if ep: return ep
 
+    number_key = episode_number_key(keyword)
+    if number_key is not None:
+        episodes = await Episode.filter(project=project).prefetch_related(
+            *needed_fields
+        ).all()
+        number_matches = [
+            episode
+            for episode in episodes
+            if episode_number_key(episode.title) == number_key
+        ]
+        return number_matches[0] if len(number_matches) == 1 else None
+
     # 2. 模糊 (包含)
     # 例如 DB存的是 "第12话", 用户搜 "12" -> 匹配成功
     eps = await Episode.filter(project=project, title__contains=keyword).prefetch_related(*needed_fields).all()
@@ -208,6 +271,11 @@ async def find_episode(project: Project, keyword: str) -> Episode | None:
         return eps[0]
 
     return None
+
+
+def episode_number_key(value: str) -> Decimal | None:
+    numbers = re.findall(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])", value)
+    return Decimal(numbers[0]) if len(numbers) == 1 else None
 
 # ----------------- Bot 指令逻辑 -----------------
 
@@ -232,7 +300,14 @@ async def _(matcher: Matcher):
         matcher,
         "汉化进度助手",
         [
-            RenderModule("查看进度", ["查看 / 列表：显示本群全部项目", "查看 <项目>：显示项目任务", "查看 <项目> <话数>：显示单个任务"]),
+            RenderModule(
+                "查看进度",
+                [
+                    "查看 / 项目 / 列表：显示本群全部项目",
+                    "查看 <项目>：显示项目任务",
+                    "查看 <项目> <话数>：显示单个任务",
+                ],
+            ),
             RenderModule("我的项目", ["我的项目：显示当前群内你参与的未完成话数和截止日期"]),
             RenderModule("项目搜索", ["仅搜索当前群绑定的项目", "依次匹配：列表序号、名称、别称/标签、模糊关键词"]),
             RenderModule("完成任务", ["完成 <项目> <话数> 或 完成<项目><话数>", "快捷完成：<项目> <话数> 好了", "完成后会自动提醒下一位负责人"]),
@@ -254,13 +329,13 @@ cmd_finish.shortcut("done(?P<task>.*?)", command="完成", arguments=["{task}"],
 FINISH_KEYWORD_PATTERN = re.compile(r"^(.+?)好了[！!。]?$", re.DOTALL)
 
 
-def parse_finish_keyword(message: Message) -> tuple[str, str] | None:
+async def parse_finish_keyword(
+    message: Message, group_id: str
+) -> tuple[str, str] | None:
     match = FINISH_KEYWORD_PATTERN.fullmatch(message.extract_plain_text().strip())
     if not match:
         return None
-    task = match.group(1).strip()
-    parts = task.rsplit(maxsplit=1)
-    return (parts[0], parts[1]) if len(parts) == 2 else None
+    return await parse_completion_inputs(match.group(1).strip(), group_id)
 
 
 async def find_compact_completion_inputs(
@@ -289,6 +364,15 @@ async def find_compact_completion_inputs(
 async def parse_completion_inputs(
     task: str, group_id: str
 ) -> tuple[str, str] | None:
+    projects = await Project.filter(group_id=group_id).order_by("-id").all()
+    match = match_project_query(task, projects)
+    if match and match[1]:
+        project, episode_input = match
+        episode = await find_episode(project, episode_input)
+        if episode:
+            return project.name, episode.title
+        return None
+
     parts = task.strip().rsplit(maxsplit=1)
     if len(parts) == 2:
         return parts[0], parts[1]
@@ -306,10 +390,9 @@ def extract_completion_task(message: Message) -> str:
 async def is_finish_keyword(event: GroupMessageEvent) -> bool:
     if not isinstance(event, GroupMessageEvent):
         return False
-    if parse_finish_keyword(event.get_message()):
-        return True
-    match = FINISH_KEYWORD_PATTERN.fullmatch(event.get_message().extract_plain_text().strip())
-    return bool(match and await find_compact_completion_inputs(match.group(1), str(event.group_id)))
+    return bool(
+        await parse_finish_keyword(event.get_message(), str(event.group_id))
+    )
 
 
 async def handle_episode_completion(
@@ -338,113 +421,27 @@ async def handle_episode_completion(
 
     is_leader = (project.leader and project.leader.qq_id == qq_id)
     is_group_admin = event.sender.role in ["owner", "admin"]
-    is_assignee = False
-
-    stage_name = ""
-    target_user_name = "未分配"
-
-    if current_status == 1:
-        stage_name = "翻译"
-        if episode.translator:
-            target_user_name = episode.translator.name
-            if episode.translator.qq_id == qq_id: is_assignee = True
-    elif current_status == 2:
-        stage_name = "校对"
-        if episode.proofreader:
-            target_user_name = episode.proofreader.name
-            if episode.proofreader.qq_id == qq_id: is_assignee = True
-    elif current_status == 3:
-        stage_name = "嵌字"
-        if episode.typesetter:
-            target_user_name = episode.typesetter.name
-            if episode.typesetter.qq_id == qq_id: is_assignee = True
-    elif current_status == 4:
-        stage_name = "监修"
-        if episode.supervisor:
-            target_user_name = episode.supervisor.name
-            if episode.supervisor.qq_id == qq_id: is_assignee = True
-    elif current_status == 5:
+    if current_status == 5:
         await finish_image(matcher, "任务已完结", [RenderModule("无需重复提交", [f"{project.name} {episode.title}"])], palette=AMBER_PALETTE)
-    else:
+    if current_status not in (1, 2, 3, 4):
         await finish_image(matcher, "任务尚未分配", [RenderModule("请前往后台", ["先为当前阶段分配负责人"] )], palette=AMBER_PALETTE)
 
-    if not (is_assignee or is_leader or is_group_admin):
+    try:
+        await complete_episode(
+            episode,
+            qq_id,
+            event.sender.card or event.sender.nickname,
+            int(event.group_id),
+            bot,
+            allow_privileged=bool(is_leader or is_group_admin),
+        )
+    except PermissionError as error:
         await finish_image(
             matcher,
             "没有提交权限",
-            [RenderModule("当前负责人", [f"阶段：{stage_name}", f"负责人：{target_user_name}", "仅本人、组长或管理员可提交"])],
+            [RenderModule("当前负责人", str(error).splitlines())],
             palette=CORAL_PALETTE,
         )
-
-    # 4. 状态流转
-    next_role = ""
-    next_user = None
-    await record_stage_completion(episode, current_status)
-
-    if current_status == 1:
-        episode.status = 2
-        if not episode.ddl_proof: episode.ddl_proof = get_default_ddl()
-        next_role = "校对"
-        next_user = episode.proofreader
-    elif current_status == 2:
-        episode.status = 3
-        if not episode.ddl_type: episode.ddl_type = get_default_ddl()
-        next_role = "嵌字"
-        next_user = episode.typesetter
-    elif current_status == 3:
-        episode.status = 4
-        if not episode.ddl_supervision: episode.ddl_supervision = get_default_ddl()
-        next_role = "监修"
-        next_user = episode.supervisor
-    elif current_status == 4:
-        episode.status = 5
-        next_role = "发布"
-        next_user = None
-
-    await episode.save()
-
-    status_text = ['','翻译','校对','嵌字','监修'][current_status]
-    result_lines = [f"{project.name} {episode.title}", f"{status_text}已完成"]
-    if not is_assignee:
-        result_lines.append(f"由 {event.sender.card or event.sender.nickname} 代提交")
-
-    target_qq = None
-    if episode.status == 5:
-        result_lines.append("全部工序已完结，准备发布")
-        if project.leader:
-            target_qq = project.leader.qq_id
-        else:
-            try:
-                mlist = await bot.get_group_member_list(group_id=int(event.group_id))
-                owner = next((m for m in mlist if m['role'] == 'owner'), None)
-                if owner: target_qq = str(owner['user_id'])
-            except Exception as e:
-                logger.warning(f"获取群主失败: {e}")
-
-        if not target_qq:
-            result_lines.append("请管理员查收发布")
-    else:
-        result_lines.append(f"下一阶段：{next_role}")
-
-        next_ddl = None
-        if episode.status == 2: next_ddl = episode.ddl_proof
-        elif episode.status == 3: next_ddl = episode.ddl_type
-        elif episode.status == 4: next_ddl = episode.ddl_supervision
-
-        if next_ddl:
-            result_lines.append(f"截止日期：{next_ddl.strftime('%m-%d')}")
-        if next_user:
-            target_qq = next_user.qq_id
-            result_lines.append("已通知下一位负责人")
-        else:
-            result_lines.append("下一阶段尚未分配负责人")
-
-    await notify_episode_completed(
-        str(event.group_id),
-        result_lines,
-        {target_qq} if target_qq else set(),
-        bot,
-    )
 
 @cmd_finish.handle()
 async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
@@ -469,18 +466,19 @@ keyword_finish = on_message(rule=Rule(is_finish_keyword), priority=6, block=True
 
 @keyword_finish.handle()
 async def _(matcher: Matcher, bot: Bot, event: GroupMessageEvent):
-    parsed = parse_finish_keyword(event.get_message())
-    if not parsed:
-        match = FINISH_KEYWORD_PATTERN.fullmatch(event.get_message().extract_plain_text().strip())
-        if match:
-            parsed = await find_compact_completion_inputs(match.group(1), str(event.group_id))
+    parsed = await parse_finish_keyword(event.get_message(), str(event.group_id))
     if parsed:
         await handle_episode_completion(matcher, bot, event, *parsed)
     await keyword_finish.finish()
 
 
 # 3. 查看指令
-cmd_view = on_command("查看", aliases={"查看项目", "view", "进度", "项目列表"}, priority=5, block=True)
+cmd_view = on_command(
+    "查看",
+    aliases={"查看项目", "view", "进度", "项目列表", "项目"},
+    priority=5,
+    block=True,
+)
 
 
 async def send_view_images(
@@ -547,9 +545,9 @@ async def _(matcher: Matcher, event: GroupMessageEvent):
 async def _(
     matcher: Matcher, bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()
 ):
-    msg = args.extract_plain_text().strip().split()
+    query = args.extract_plain_text().strip()
 
-    if not msg or msg[0] in ["全部", "所有", "列表", "list", "all"]:
+    if not query or query.casefold() in ["全部", "所有", "列表", "list", "all"]:
         current_gid = str(event.group_id)
 
         projects = await Project.filter(group_id=current_gid).order_by('-id').prefetch_related(
@@ -596,14 +594,22 @@ async def _(
         await send_view_images(matcher, "项目一览", lines)
         await cmd_view.finish()
 
-    target_name = msg[0]
-    target_ep = msg[1] if len(msg) > 1 else None
-
-    # 1. 智能查找项目
-    project = await find_project(target_name, str(event.group_id))
+    projects = await Project.filter(group_id=str(event.group_id)).prefetch_related(
+        "leader",
+        "default_translator",
+        "default_proofreader",
+        "default_typesetter",
+        "default_supervisor",
+    ).order_by("-id").all()
+    match = match_project_query(query, projects)
+    if match:
+        project, target_ep = match
+    else:
+        project = await find_project(query, str(event.group_id))
+        target_ep = None
 
     if not project:
-        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [target_name])], palette=LIGHT_BLUE_PALETTE)
+        await finish_image(matcher, "未找到项目", [RenderModule("查询内容", [query])], palette=LIGHT_BLUE_PALETTE)
 
     if target_ep:
         # 2. 智能查找话数
