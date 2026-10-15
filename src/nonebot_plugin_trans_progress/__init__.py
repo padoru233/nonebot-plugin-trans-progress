@@ -23,7 +23,13 @@ from .catalog_store import (
     is_catalog_generation_enabled,
 )
 from .workflow import complete_episode
-from .web import LOGIN_PATH, api_router, get_auth_configuration_error, public_router
+from .web import (
+    LOGIN_PATH,
+    api_router,
+    get_auth_configuration_error,
+    public_router,
+    webhook_router,
+)
 from .auth_pages import render_auth_page
 from .config import Config
 from . import scheduler
@@ -154,6 +160,7 @@ async def init_web():
 
     # 挂载 web.py 的 API 路由 (自带锁)
     sub_app.include_router(api_router)
+    sub_app.include_router(webhook_router)
     sub_app.include_router(public_router)
 
     logger.opt(colors=True).info(f"正在挂载 Web 后台到 <y>/trans</y> ...")

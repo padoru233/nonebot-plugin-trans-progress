@@ -104,7 +104,9 @@
 | TRANS_MOEFLOW_CLIENT_SECRET | 是 | 无 | 对应客户端密钥，仅保存在 Bot 服务端 |
 | TRANS_MOEFLOW_REDIRECT_URI | 是 | 无 | Bot 登录回调地址，必须与萌翻登记值完全一致 |
 | TRANS_AUTH_SESSION_SECRET | 是 | 无 | 随机、高强度的 Bot 后台会话签名密钥 |
-| TRANS_MOEFLOW_ALLOWED_SUBJECTS | 否 | `[]` | 可进入后台的萌翻用户 ID JSON 数组；萌翻站点管理员始终允许 |
+| TRANS_MOEFLOW_ALLOWED_SUBJECTS | 否 | `[]` | 可进入后台的萌翻用户 ID JSON 数组，可管理所有群；萌翻站点管理员始终允许 |
+| TRANS_MOEFLOW_TEAM_GROUPS | 否 | `{}` | 萌翻团队 ID 到 QQ 群号的 JSON 映射；团队创建人/管理员只能管理映射到的群 |
+| TRANS_WEBHOOK_TOKEN | 是 | 无 | 萌翻调用 Bot webhook 的令牌，须与萌翻团队设置中的机器人鉴权 Token 一致 |
 | TRANS_PUBLIC_CATALOG_ENABLED | 否 | `false` | 是否开放无鉴权的漫画进度目录 JSON |
 | TRANS_PUBLIC_CATALOG_ALLOW_ORIGIN | 否 | `https://keli.love` | 可跨域读取目录的前端来源 |
 | TRANS_PUBLIC_CATALOG_CACHE_SECONDS | 否 | `60` | 浏览器缓存目录的秒数 |
@@ -154,8 +156,33 @@ BOT_AUTHORIZATION_CLIENTS={"trans-progress":{"secret":"与_TRANS_MOEFLOW_CLIENT_
 将 Bot 的 `MOEFLOW_API_URL` 配置为萌翻专用的 `/bot-auth` 反向代理地址，例如
 `https://moeflow.example.com/bot-auth`；不要使用萌翻现有的 `/api` 前缀。
 
-Bot 与萌翻均配置完成后，访问 `/trans/` 会跳转到萌翻登录页。萌翻站点管理员可直接进入；
-其他用户必须将萌翻用户 ID 加入 `TRANS_MOEFLOW_ALLOWED_SUBJECTS`。Bot 不保存萌翻密码或访问令牌。
+Bot 与萌翻均配置完成后，访问 `/trans/` 会跳转到萌翻登录页。能进入后台的账号分三类：
+
+| 账号 | 可管理范围 |
+| :--- | :--- |
+| 萌翻站点管理员 | 所有群 |
+| 在 `TRANS_MOEFLOW_ALLOWED_SUBJECTS` 中的用户 | 所有群 |
+| 萌翻团队的创建人或管理员，且该团队在 `TRANS_MOEFLOW_TEAM_GROUPS` 中 | 仅映射到的群 |
+
+团队与群的对应必须由 Bot 管理者写在配置里，例如：
+
+```env
+TRANS_MOEFLOW_TEAM_GROUPS={"<萌翻团队ID>":["123456789","987654321"]}
+```
+
+不使用萌翻团队设置里的「机器人 QQ 群号」，因为它由团队管理员自行填写、无法证明其拥有该群。
+团队管理员登录时被拒绝时，页面会列出他管理的团队名称和 ID，直接复制到配置里即可。
+一个团队可以对应多个群，在数组里写多个群号即可；一个群也可以同时映射给多个团队。
+团队管理员的可管理范围在登录时确定，调整配置或其团队角色后需要重新登录才会生效；顶栏会标出受限账号。
+受限账号在「成员管理」中可以修改成员昵称和标签，但不能同步群成员或删除成员，也不能查看「Bot 运行状态」（`/health`）。
+Bot 不保存萌翻密码或访问令牌。
+
+#### 萌翻 → Bot 的 webhook
+
+萌翻创建项目、话数或同步成员时会请求 Bot 的 `/project/ensure`、`/episode/ensure`、
+`/episode/complete`、`/episode/manual-complete` 和 `/episode/member/sync`。这些接口由萌翻服务器调用，
+不使用浏览器登录，而是校验请求头 `X-Auth-Token`。请在 Bot 中设置 `TRANS_WEBHOOK_TOKEN`，并在萌翻
+每个团队的机器人设置里把「机器人鉴权 Token」填成同一个值。未配置时这些接口会拒绝所有请求。
 
 在 Moeflow 中删除项目集不会通知 Bot，Bot 里的同名作品集和话数会保留；之后在 Moeflow 重建同名项目集时会复用它们。
 需要清理时，请在 Bot 后台用作品集上的删除按钮手动删除（会连同下面的全部话数一起删除）。

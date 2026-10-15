@@ -8,7 +8,7 @@ import unicodedata
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -63,17 +63,52 @@ def require_auth_configuration() -> None:
         raise HTTPException(status_code=503, detail=error)
 
 
-async def require_admin_session(request: Request) -> dict[str, str]:
+async def require_admin_session(request: Request) -> dict:
     require_auth_configuration()
     user = request.session.get("trans_admin")
     if not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="请先使用萌翻账号登录")
     subject = user.get("subject")
     name = user.get("name")
-    if not isinstance(subject, str) or not isinstance(name, str):
+    groups = user.get("groups")
+    if (
+        not isinstance(subject, str)
+        or not isinstance(name, str)
+        or not (groups is None or isinstance(groups, list))
+    ):
         request.session.clear()
         raise HTTPException(status_code=401, detail="登录会话无效")
-    return {"subject": subject, "name": name}
+    return {"subject": subject, "name": name, "groups": groups}
+
+
+async def require_webhook_token(
+    x_auth_token: str | None = Header(default=None, alias="X-Auth-Token"),
+) -> None:
+    """萌翻服务器调用 webhook 时的服务端鉴权，与浏览器登录互相独立。"""
+    expected = plugin_config.trans_webhook_token
+    if not expected:
+        raise HTTPException(status_code=503, detail="未配置 TRANS_WEBHOOK_TOKEN")
+    if not x_auth_token or not secrets.compare_digest(
+        x_auth_token.encode(), expected.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Token")
+
+
+def is_group_allowed(admin: dict, group_id: object) -> bool:
+    """groups 为 None 表示不限范围；否则只允许列表内的群。"""
+    groups = admin["groups"]
+    return groups is None or str(group_id) in groups
+
+
+def require_group_access(admin: dict, group_id: object) -> None:
+    if not is_group_allowed(admin, group_id):
+        raise HTTPException(status_code=403, detail="无权操作该群的数据")
+
+
+def require_full_access(admin: dict, detail: str) -> None:
+    """仅不受群范围限制的账号可用；团队管理员（groups 不为 None）会被拒绝。"""
+    if admin["groups"] is not None:
+        raise HTTPException(status_code=403, detail=detail)
 
 
 def create_code_challenge(verifier: str) -> str:
@@ -82,6 +117,7 @@ def create_code_challenge(verifier: str) -> str:
 
 
 api_router = APIRouter(dependencies=[Depends(require_admin_session)])
+webhook_router = APIRouter(dependencies=[Depends(require_webhook_token)])
 public_router = APIRouter()
 
 
@@ -167,26 +203,46 @@ async def moeflow_login_callback(
     subject = identity.get("subject") if isinstance(identity, dict) else None
     name = identity.get("name") if isinstance(identity, dict) else None
     admin = identity.get("admin") if isinstance(identity, dict) else None
+    raw_teams = identity.get("admin_teams", []) if isinstance(identity, dict) else None
     if (
         not isinstance(subject, str)
         or not isinstance(name, str)
         or not isinstance(admin, bool)
+        or not isinstance(raw_teams, list)
+        or not all(
+            isinstance(team, dict)
+            and isinstance(team.get("id"), str)
+            and isinstance(team.get("name"), str)
+            for team in raw_teams
+        )
     ):
         return login_error_page(
             "无法验证登录", "萌翻返回了不完整的身份信息，请联系管理员。", 502
         )
-    if not admin and subject not in plugin_config.trans_moeflow_allowed_subjects:
+
+    groups = resolve_group_scope(subject, admin, raw_teams)
+    if groups == []:
         logger.warning(f"拒绝未授权的萌翻账号登录后台：{subject}")
+        details = [f"当前萌翻账号：{name}", f"用户 ID：{subject}"]
+        if raw_teams:
+            details.append(
+                "你管理的萌翻团队："
+                + "；".join(f"{team['name']}（{team['id']}）" for team in raw_teams)
+            )
+            details.append(
+                "这些团队尚未关联 QQ 群，请把团队 ID 发给管理员，"
+                "由其写入 TRANS_MOEFLOW_TEAM_GROUPS。"
+            )
+        else:
+            details.append(
+                "请把用户 ID 发给管理员，由其加入 TRANS_MOEFLOW_ALLOWED_SUBJECTS。"
+            )
+        details.append("如需更换账号，请先在萌翻网站退出登录。")
         return render_auth_page(
             "没有访问权限",
             "此萌翻账号未获准访问 Bot 后台。",
             status_code=403,
-            details=[
-                f"当前萌翻账号：{name}",
-                f"用户 ID：{subject}",
-                "请把用户 ID 发给管理员，由其加入 TRANS_MOEFLOW_ALLOWED_SUBJECTS。",
-                "如需更换账号，请先在萌翻网站退出登录。",
-            ],
+            details=details,
             actions=[
                 ("重新登录", LOGIN_PATH, True),
                 ("前往萌翻", plugin_config.moeflow_web_url or "/", False),
@@ -194,13 +250,33 @@ async def moeflow_login_callback(
         )
 
     request.session.clear()
-    request.session["trans_admin"] = {"subject": subject, "name": name}
+    request.session["trans_admin"] = {
+        "subject": subject,
+        "name": name,
+        "groups": groups,
+    }
     return RedirectResponse("/trans/", status_code=303)
 
 
+def resolve_group_scope(
+    subject: str, is_site_admin: bool, admin_teams: list[dict]
+) -> list[str] | None:
+    """返回 None 表示不限范围，[] 表示无权访问，否则为可管理的群号列表。
+
+    团队与群的对应由 Bot 管理者在配置中指定。萌翻团队里的机器人群号是团队管理员
+    自填的，不能作为授权依据。
+    """
+    if is_site_admin or subject in plugin_config.trans_moeflow_allowed_subjects:
+        return None
+    groups: set[str] = set()
+    for team in admin_teams:
+        groups.update(plugin_config.trans_moeflow_team_groups.get(team["id"], []))
+    return sorted(groups)
+
+
 @api_router.get("/auth/me")
-async def current_admin(admin: dict[str, str] = Depends(require_admin_session)):
-    return admin
+async def current_admin(admin: dict = Depends(require_admin_session)):
+    return {**admin, "moeflow_url": plugin_config.moeflow_web_url}
 
 
 @public_router.post("/auth/logout")
@@ -211,10 +287,13 @@ async def logout(request: Request):
 
 @public_router.get("/auth/logged-out")
 async def logged_out():
+    actions = [("重新登录", LOGIN_PATH, True)]
+    if plugin_config.moeflow_web_url:
+        actions.append(("前往萌翻", plugin_config.moeflow_web_url, False))
     return render_auth_page(
         "已退出登录",
         "你已退出 Bot 后台。这不会退出你的萌翻账号，再次登录时可能无需重新输入密码。",
-        actions=[("重新登录", LOGIN_PATH, True)],
+        actions=actions,
     )
 
 
@@ -513,7 +592,8 @@ def ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
 # --- Routes ---
 
 @api_router.get("/health")
-async def get_bot_health():
+async def get_bot_health(admin: dict = Depends(require_admin_session)):
+    require_full_access(admin, "无权查看 Bot 运行状态")
     bots = []
     for bot in get_online_bots():
         try:
@@ -536,7 +616,7 @@ async def get_bot_health():
     }
 
 @api_router.get("/groups/all")
-async def get_all_bot_groups():
+async def get_all_bot_groups(admin: dict = Depends(require_admin_session)):
     groups_map = {}
     for bot in get_bots().values():
         if isinstance(bot, Bot):
@@ -544,13 +624,15 @@ async def get_all_bot_groups():
                 g_list = await bot.get_group_list()
                 for g in g_list:
                     gid = str(g['group_id'])
+                    if not is_group_allowed(admin, gid):
+                        continue
                     groups_map[gid] = {"group_id": gid, "group_name": g['group_name']}
             except Exception as e:
                 logger.warning(f"Bot {bot.self_id} 获取群列表异常: {e}")
     return list(groups_map.values())
 
 @api_router.get("/groups/db")
-async def get_db_groups():
+async def get_db_groups(admin: dict = Depends(require_admin_session)):
     all_groups_map = {}
     for bot in get_bots().values():
         if isinstance(bot, Bot):
@@ -564,6 +646,8 @@ async def get_db_groups():
         db_group_ids = set(await User.all().distinct().values_list("group_id", flat=True))
         filtered = []
         for gid in db_group_ids:
+            if not is_group_allowed(admin, gid):
+                continue
             g_name = all_groups_map.get(gid, "未知群聊(Bot不在群内)")
             filtered.append({"group_id": gid, "group_name": g_name})
         return filtered
@@ -572,8 +656,9 @@ async def get_db_groups():
         return []
 
 @api_router.get("/projects")
-async def get_projects():
+async def get_projects(admin: dict = Depends(require_admin_session)):
     projects = await Project.all().order_by('-id').prefetch_related('leader', 'default_translator', 'default_proofreader', 'default_typesetter', 'default_supervisor')
+    projects = [p for p in projects if is_group_allowed(admin, p.group_id)]
 
     bot_groups_map = {}
     for bot in get_bots().values():
@@ -628,12 +713,15 @@ async def get_projects():
     return result
 
 @api_router.get("/members")
-async def get_members():
-    return await User.all()
+async def get_members(admin: dict = Depends(require_admin_session)):
+    return [m for m in await User.all() if is_group_allowed(admin, m.group_id)]
 
 @api_router.post("/group/sync_members")
-async def sync_group_members(data: SyncGroupModel):
+async def sync_group_members(
+    data: SyncGroupModel, admin: dict = Depends(require_admin_session)
+):
     gid = str(data.group_id)
+    require_full_access(admin, "团队管理员无权同步群成员")
     target_bot = await find_bot_for_group(gid)
 
     if not target_bot:
@@ -661,7 +749,10 @@ async def sync_group_members(data: SyncGroupModel):
     return {"status": "success", "count": count, "group_name": g_name}
 
 @api_router.post("/project/create")
-async def create_project(proj: ProjectCreate):
+async def create_project(
+    proj: ProjectCreate, admin: dict = Depends(require_admin_session)
+):
+    require_group_access(admin, proj.group_id)
     if await Project.filter(name=proj.name).exists():
         raise HTTPException(400, "项目名已存在")
 
@@ -712,16 +803,19 @@ async def create_project(proj: ProjectCreate):
     await notify_project_created(project, gid, proj.aliases, proj.tags)
     return {"status": "success"}
 
-@api_router.post("/project/ensure")
+@webhook_router.post("/project/ensure")
 async def ensure_project(form: ProjectEnsure):
     group_id = str(form.group_id)
     project, created = await ensure_project_for_group(form.name, group_id)
     return {"status": "success", "created": created, "project_id": project.id}
 
 @api_router.put("/project/{id}")
-async def update_project(id: int, form: ProjectUpdate):
+async def update_project(
+    id: int, form: ProjectUpdate, admin: dict = Depends(require_admin_session)
+):
     p = await Project.get_or_none(id=id)
     if not p: raise HTTPException(404)
+    require_group_access(admin, p.group_id)
     gid = str(p.group_id)
     p.name = form.name
     p.aliases = form.aliases
@@ -754,14 +848,15 @@ async def update_project(id: int, form: ProjectUpdate):
     return {"status": "success"}
 
 @api_router.delete("/project/{id}")
-async def delete_project(id: int):
+async def delete_project(id: int, admin: dict = Depends(require_admin_session)):
     p = await Project.get_or_none(id=id)
     if not p: raise HTTPException(404)
+    require_group_access(admin, p.group_id)
     await Episode.filter(project=p).delete()
     await p.delete()
     return {"status": "success"}
 
-@api_router.post("/episode/ensure")
+@webhook_router.post("/episode/ensure")
 async def ensure_episode(form: EpisodeEnsure):
     group_id = str(form.group_id)
     # 项目集若在 bot 侧确实是第一次出现（比如萌翻已有项目集刚同步/还未通过
@@ -799,8 +894,13 @@ async def ensure_episode(form: EpisodeEnsure):
     }
 
 @api_router.post("/episode/add")
-async def add_episode(ep: EpisodeCreate):
-    projects = await find_projects_by_name_or_alias(ep.project_name)
+async def add_episode(ep: EpisodeCreate, admin: dict = Depends(require_admin_session)):
+    # 先过滤到有权限的群，避免同名项目属于其他群时泄露其存在
+    projects = [
+        p
+        for p in await find_projects_by_name_or_alias(ep.project_name)
+        if is_group_allowed(admin, p.group_id)
+    ]
     if not projects:
         raise HTTPException(404, "未找到匹配的项目或别名")
     if len(projects) > 1:
@@ -845,9 +945,12 @@ async def add_episode(ep: EpisodeCreate):
     return {"status": "created"}
 
 @api_router.put("/episode/{id}")
-async def update_episode(id: int, form: EpisodeUpdate):
+async def update_episode(
+    id: int, form: EpisodeUpdate, admin: dict = Depends(require_admin_session)
+):
     ep = await Episode.get_or_none(id=id).prefetch_related('project', 'project__leader', 'translator', 'proofreader', 'typesetter', 'supervisor')
     if not ep: raise HTTPException(404)
+    require_group_access(admin, ep.project.group_id)
     gid = str(ep.project.group_id)
 
     # 仅在请求带了该字段时才改动链接，避免其他调用方的 PUT 误清空；地址未变则不再请求再漫画
@@ -947,7 +1050,7 @@ async def update_episode(id: int, form: EpisodeUpdate):
 
     return {"status": "success"}
 
-@api_router.post("/episode/complete")
+@webhook_router.post("/episode/complete")
 async def complete_episode_by_assignee(form: EpisodeCompletion):
     role_status = {
         "translator": (1, "translator"),
@@ -994,7 +1097,7 @@ async def complete_episode_by_assignee(form: EpisodeCompletion):
         raise HTTPException(409, str(error)) from error
     return {"status": "success", "episode_id": episode.id}
 
-@api_router.post("/episode/manual-complete")
+@webhook_router.post("/episode/manual-complete")
 async def manually_complete_episode(form: ManualEpisodeCompletion):
     projects = await find_projects_by_name_or_alias(form.project_name)
     if not projects:
@@ -1021,7 +1124,7 @@ async def manually_complete_episode(form: ManualEpisodeCompletion):
     await notify_episode_manually_completed(project, episode, str(project.group_id))
     return {"status": "success", "episode_id": episode.id}
 
-@api_router.post("/episode/member/sync")
+@webhook_router.post("/episode/member/sync")
 async def sync_member(form: MemberSynchronization):
     if form.action not in {"added", "changed", "removed"}:
         raise HTTPException(422, "不支持的成员变动类型")
@@ -1063,31 +1166,40 @@ async def sync_member(form: MemberSynchronization):
     }
 
 @api_router.delete("/episode/{id}")
-async def delete_episode(id: int):
-    await Episode.filter(id=id).delete()
+async def delete_episode(id: int, admin: dict = Depends(require_admin_session)):
+    ep = await Episode.get_or_none(id=id).prefetch_related("project")
+    if ep:
+        require_group_access(admin, ep.project.group_id)
+        await ep.delete()
     mark_public_catalog_dirty()
     return {"status": "success"}
 
 @api_router.put("/member/{id}")
-async def update_member(id: int, form: MemberUpdate):
+async def update_member(
+    id: int, form: MemberUpdate, admin: dict = Depends(require_admin_session)
+):
     u = await User.get_or_none(id=id)
     if not u: raise HTTPException(404)
+    require_group_access(admin, u.group_id)
     u.name = form.name
     u.tags = form.tags
     await u.save()
     return {"status": "success"}
 
 @api_router.delete("/member/{id}")
-async def delete_member(id: int):
+async def delete_member(id: int, admin: dict = Depends(require_admin_session)):
+    require_full_access(admin, "团队管理员无权删除成员")
     u = await User.get_or_none(id=id)
     if not u: raise HTTPException(404)
     await u.delete()
     return {"status": "success"}
 
 @api_router.get("/settings/list")
-async def get_settings_list():
+async def get_settings_list(admin: dict = Depends(require_admin_session)):
     synced_group_ids = await User.all().distinct().values_list("group_id", flat=True)
-    synced_group_ids = [str(gid) for gid in synced_group_ids]
+    synced_group_ids = [
+        str(gid) for gid in synced_group_ids if is_group_allowed(admin, gid)
+    ]
     if not synced_group_ids: return []
 
     group_name_map = {}
@@ -1152,11 +1264,15 @@ async def get_settings_list():
     return result
 
 @api_router.post("/settings/update")
-async def update_setting(form: SettingUpdate):
+async def update_setting(
+    form: SettingUpdate, admin: dict = Depends(require_admin_session)
+):
+    require_group_access(admin, form.group_id)
     await GroupSetting.update_or_create(group_id=form.group_id, defaults={"enable_broadcast": form.enable, "broadcast_time": form.time})
     return {"status": "success"}
 
 @api_router.post("/settings/remind_now")
-async def remind_now(form: RemindNow):
+async def remind_now(form: RemindNow, admin: dict = Depends(require_admin_session)):
+    require_group_access(admin, form.group_id)
     await check_and_send_broadcast(form.group_id, is_manual=True)
     return {"status": "success"}

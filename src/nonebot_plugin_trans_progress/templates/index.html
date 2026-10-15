@@ -312,7 +312,7 @@
                 padding: 0 10px;
             }
 
-            .user-name, .logout-text { display: none; }
+            .user-name, .logout-text, .scope-tag { display: none; }
 
             .el-dialog {
                 width: 95% !important;
@@ -407,6 +407,14 @@
                     <span v-if="currentUser" class="user-name" :title="'萌翻用户 ID：' + currentUser.subject">
                         <el-icon><User /></el-icon>{{ currentUser.name }}
                     </span>
+                    <el-tag v-if="currentUser && currentUser.groups" type="warning" effect="plain" size="small"
+                        class="scope-tag" :title="'仅可管理群：' + currentUser.groups.join('、')">
+                        团队管理员 · {{ currentUser.groups.length }} 个群
+                    </el-tag>
+                    <el-button v-if="currentUser && currentUser.moeflow_url" @click="openMoeflow" icon="Link"
+                        title="前往萌翻">
+                        <span class="logout-text">前往萌翻</span>
+                    </el-button>
                     <el-button @click="logout" icon="SwitchButton" title="退出登录">
                         <span class="logout-text">退出登录</span>
                     </el-button>
@@ -611,7 +619,7 @@
                     <el-tab-pane label="成员管理" name="members">
                         <div class="member-panel">
                         <div class="member-toolbar" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <el-button type="success" icon="Refresh" @click="dialogs.sync = true">同步群成员</el-button>
+                            <el-button v-if="!isRestricted" type="success" icon="Refresh" @click="dialogs.sync = true">同步群成员</el-button>
                             <el-input v-model="memberSearch" placeholder="搜索成员/标签..." prefix-icon="Search" clearable
                                 style="width: 200px"></el-input>
                             <el-select v-model="filterGroup" placeholder="按群组筛选" clearable style="width: 200px">
@@ -639,7 +647,7 @@
                             <el-table-column label="操作" width="100" align="center">
                                 <template #default="{row}">
                                     <el-button size="small" icon="Edit" @click="openEditMember(row)"></el-button>
-                                    <el-button size="small" type="danger" icon="Delete"
+                                    <el-button v-if="!isRestricted" size="small" type="danger" icon="Delete"
                                         @click="handleDelMember(row)"></el-button>
                                 </template>
                             </el-table-column>
@@ -854,9 +862,11 @@
                     return Promise.reject(err);
                 });
                 const currentUser = ref(null);
+                const isRestricted = computed(() => !!(currentUser.value && currentUser.value.groups));
                 const loadCurrentUser = async () => {
                     try { currentUser.value = (await axios.get(`${API}/auth/me`)).data; } catch (e) { console.error(e); }
                 };
+                const openMoeflow = () => window.open(currentUser.value.moeflow_url, '_blank', 'noopener');
                 const logout = async () => {
                     try { await axios.post(`${API}/auth/logout`); } catch (e) { console.error(e); }
                     window.location.assign(`${API}/auth/logged-out`);
@@ -1123,7 +1133,7 @@
                 onMounted(() => { loadCurrentUser(); fetchData(); });
 
                 return {
-                    loading, logout, currentUser,
+                    loading, logout, currentUser, openMoeflow, isRestricted,
                     activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB, settingsList,
                     dialogs, forms, stages, filters, memberKeyword,
                     openCreateProject, openEditProject, submitProject, handleDelProject, handleDelEpisode,

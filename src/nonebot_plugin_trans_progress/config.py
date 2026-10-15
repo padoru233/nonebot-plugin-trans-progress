@@ -18,6 +18,10 @@ class Config(BaseModel):
     trans_auth_session_secret: str | None = None
     # 允许访问后台的萌翻用户 ID；萌翻站点管理员始终允许访问
     trans_moeflow_allowed_subjects: list[str] = []
+    # 萌翻团队 ID -> 该团队管理员可管理的 QQ 群号；用于限定团队管理员的可见范围
+    trans_moeflow_team_groups: dict[str, list[str]] = {}
+    # 萌翻服务器调用 Bot webhook 时使用的令牌（团队设置中的机器人鉴权 Token）
+    trans_webhook_token: str | None = None
     # Bot 后台会话存活时间（秒）
     trans_auth_session_max_age: int = 28800
     # 是否公开漫画进度目录 JSON
