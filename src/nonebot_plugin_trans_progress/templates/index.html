@@ -44,6 +44,20 @@
             backdrop-filter: blur(12px);
         }
 
+        .header-actions { display: flex; align-items: center; gap: 12px; }
+        .header-actions .el-button + .el-button { margin-left: 0; }
+        .user-name {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--muted-ink);
+            font-size: 14px;
+        }
+
         .header .title {
             color: var(--navy);
             font-size: 21px;
@@ -298,6 +312,8 @@
                 padding: 0 10px;
             }
 
+            .user-name, .logout-text { display: none; }
+
             .el-dialog {
                 width: 95% !important;
                 margin-top: 5vh !important;
@@ -387,24 +403,20 @@
                 <div class="title"><el-icon style="margin-right: 8px;">
                         <Monitor />
                     </el-icon><span>汉化进度管理</span></div>
-                <div v-if="authorized">
-                    <el-button @click="logout" icon="SwitchButton" circle title="退出"></el-button>
+                <div class="header-actions">
+                    <span v-if="currentUser" class="user-name" :title="'萌翻用户 ID：' + currentUser.subject">
+                        <el-icon><User /></el-icon>{{ currentUser.name }}
+                    </span>
+                    <el-button @click="logout" icon="SwitchButton" title="退出登录">
+                        <span class="logout-text">退出登录</span>
+                    </el-button>
                     <el-button type="primary" @click="fetchData" :loading="loading" icon="Refresh" circle
                         title="刷新"></el-button>
                 </div>
             </el-header>
 
             <el-main class="main-container">
-                <el-dialog v-model="dialogs.login" title="身份验证" :show-close="false" :close-on-click-modal="false"
-                    width="300px" align-center>
-                    <p style="color: #606266; margin-bottom: 15px;">请输入配置中的密码以继续访问。</p>
-                    <el-input v-model="authPassword" type="password" placeholder="密码" show-password
-                        @keyup.enter="handleLogin" size="large"></el-input>
-                    <template #footer><el-button type="primary" @click="handleLogin" style="width: 100%;" size="large">登
-                            录</el-button></template>
-                </el-dialog>
-
-                <el-tabs v-model="activeTab" v-if="authorized">
+                <el-tabs v-model="activeTab">
                     <el-tab-pane label="项目列表" name="projects">
                         <div class="workspace-toolbar">
                             <el-row :gutter="12" align="bottom">
@@ -673,6 +685,13 @@
                         <el-switch v-model="forms.project.auto_schedule" active-text="自动排期"
                             inactive-text="手动排期"></el-switch>
                     </el-form-item>
+                    <el-form-item label="校对">
+                        <el-switch v-model="forms.project.needs_proofreading" active-text="默认需要校对"
+                            inactive-text="默认无需校对"></el-switch>
+                        <div style="width: 100%; color: #909399; font-size: 12px; margin-top: 4px;">
+                            仅作为新建话数的默认值；已有话数可单独修改。
+                        </div>
+                    </el-form-item>
                     <el-form-item label="展示">
                         <el-switch v-model="forms.project.standalone_episodes" active-text="每话作为独立作品展示"
                             inactive-text="合并为一部作品"></el-switch>
@@ -704,6 +723,13 @@
                 <el-form :model="forms.episode" label-width="50px" size="large">
                     <el-form-item label="标题"><el-input v-model="forms.episode.title"
                             placeholder="输入标题"></el-input></el-form-item>
+                    <el-form-item label="校对">
+                        <el-switch v-model="forms.episode.needs_proofreading" active-text="需要校对"
+                            inactive-text="无需校对"></el-switch>
+                        <div style="width: 100%; color: #909399; font-size: 12px; line-height: 1.5; margin-top: 4px;">
+                            默认沿用新建话数时的项目设置；此处可单独调整本话。
+                        </div>
+                    </el-form-item>
                     <el-form-item label="链接" v-if="currentEditingProjectStandalone">
                         <el-input v-model="forms.episode.zaimanhua_url"
                             placeholder="再漫画地址，如 https://manhua.zaimanhua.com/details/xxxxx"></el-input>
@@ -792,8 +818,6 @@
             setup() {
                 const API = '/trans';
                 const loading = ref(false);
-                const authorized = ref(false);
-                const authPassword = ref('');
                 const projects = ref([]);
                 const members = ref([]);
                 const botGroupsAll = ref([]);
@@ -801,14 +825,14 @@
                 const settingsList = ref([]);
                 const activeTab = ref('projects');
                 const activeCollapse = ref([]);
-                const dialogs = reactive({ login: false, project: false, episode: false, sync: false, member: false });
+                const dialogs = reactive({ project: false, episode: false, sync: false, member: false });
 
                 const filters = reactive({ keyword: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false, needsAssignment: false });
                 const memberKeyword = ref('');
 
                 const forms = reactive({
-                    project: { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
-                    episode: { id: null, project_name: '', title: '', zaimanhua_url: '', status: 0, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
+                    project: { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, needs_proofreading: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' },
+                    episode: { id: null, project_name: '', title: '', zaimanhua_url: '', status: 0, needs_proofreading: true, translator_qq: '', proofreader_qq: '', typesetter_qq: '', supervisor_qq: '', ddl_trans: null, ddl_proof: null, ddl_type: null, ddl_supervision: null },
                     sync_group: '',
                     member: { id: null, name: '', tags: [] }
                 });
@@ -823,11 +847,20 @@
                     { label: '监修', userField: 'supervisor_qq', dateField: 'ddl_supervision' }
                 ];
 
-                axios.interceptors.request.use(config => { const token = localStorage.getItem('trans_token'); if (token) config.headers['X-Auth-Token'] = token; return config; });
-                axios.interceptors.response.use(res => res, err => { if (err.response && (err.response.status === 401 || err.response.status === 403)) { logout(); ElementPlus.ElMessage.error('登录失效'); } return Promise.reject(err); });
-                const checkAuth = () => { if (localStorage.getItem('trans_token')) { authorized.value = true; fetchData(); } else { dialogs.login = true; } };
-                const handleLogin = () => { if (!authPassword.value) return; localStorage.setItem('trans_token', authPassword.value); axios.get(`${API}/projects`).then(() => { authorized.value = true; dialogs.login = false; fetchData(); }).catch(() => { ElementPlus.ElMessage.error('密码错误'); localStorage.removeItem('trans_token'); }); };
-                const logout = () => { localStorage.removeItem('trans_token'); authorized.value = false; authPassword.value = ''; dialogs.login = true; };
+                axios.interceptors.response.use(res => res, err => {
+                    if (err.response && err.response.status === 401) {
+                        window.location.assign(`${API}/auth/moeflow/login`);
+                    }
+                    return Promise.reject(err);
+                });
+                const currentUser = ref(null);
+                const loadCurrentUser = async () => {
+                    try { currentUser.value = (await axios.get(`${API}/auth/me`)).data; } catch (e) { console.error(e); }
+                };
+                const logout = async () => {
+                    try { await axios.post(`${API}/auth/logout`); } catch (e) { console.error(e); }
+                    window.location.assign(`${API}/auth/logged-out`);
+                };
 
                 const fetchData = async () => {
                     loading.value = true;
@@ -849,14 +882,14 @@
                 };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
+                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, needs_proofreading: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
-                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, standalone_episodes: !!p.standalone_episodes, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
+                    forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, needs_proofreading: p.needs_proofreading, standalone_episodes: !!p.standalone_episodes, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
                     dialogs.project = true;
                 };
                 const submitProject = async () => {
-                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url' && k != 'standalone_episodes') delete pl[k] });
+                    const pl = { ...forms.project }; Object.keys(pl).forEach(k => { if (!pl[k] && k != 'id' && k != 'aliases' && k != 'tags' && k != 'zaimanhua_url' && k != 'standalone_episodes' && k != 'needs_proofreading') delete pl[k] });
                     try { if (pl.id) await axios.put(`${API}/project/${pl.id}`, pl); else await axios.post(`${API}/project/create`, pl); dialogs.project = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) }
                 };
                 const confirmDelete = (message, title, confirmButtonText) => ElementPlus.ElMessageBox.confirm(message, title, {
@@ -895,18 +928,19 @@
                         title: '',
                         zaimanhua_url: '',
                         status: 1,
+                        needs_proofreading: p.needs_proofreading,
                         translator_qq: p.defaults.trans,
                         proofreader_qq: p.defaults.proof,
                         typesetter_qq: p.defaults.type,
                         supervisor_qq: p.defaults.super,
-                        ddl_trans: addWeeks(now, 2),
-                        ddl_proof: addWeeks(now, 4),
-                        ddl_type: addWeeks(now, 6),
-                        ddl_supervision: addWeeks(now, 8)
+                        ddl_trans: p.auto_schedule ? null : addWeeks(now, 2),
+                        ddl_proof: p.auto_schedule ? null : addWeeks(now, 4),
+                        ddl_type: p.auto_schedule ? null : addWeeks(now, 6),
+                        ddl_supervision: p.auto_schedule ? null : addWeeks(now, 8)
                     };
                     dialogs.episode = true;
                 };
-                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; currentEditingProjectStandalone.value = !!p.standalone_episodes; forms.episode = { id: row.id, project_name: p.name, title: row.title, zaimanhua_url: row.zaimanhua_url || '', status: row.status, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
+                const openEditEpisode = (row, p) => { currentEditingProjectGroupId.value = p.group_id; currentEditingProjectStandalone.value = !!p.standalone_episodes; forms.episode = { id: row.id, project_name: p.name, title: row.title, zaimanhua_url: row.zaimanhua_url || '', status: row.status, needs_proofreading: row.needs_proofreading, translator_qq: row.translator?.qq_id, proofreader_qq: row.proofreader?.qq_id, typesetter_qq: row.typesetter?.qq_id, supervisor_qq: row.supervisor?.qq_id, ddl_trans: row.ddl_trans, ddl_proof: row.ddl_proof, ddl_type: row.ddl_type, ddl_supervision: row.ddl_supervision }; dialogs.episode = true; };
                 const submitEpisode = async () => { const pl = { ...forms.episode };['translator_qq', 'proofreader_qq', 'typesetter_qq', 'supervisor_qq'].forEach(k => { if (!pl[k]) pl[k] = null }); try { if (pl.id) await axios.put(`${API}/episode/${pl.id}`, pl); else await axios.post(`${API}/episode/add`, pl); dialogs.episode = false; fetchData(); ElementPlus.ElMessage.success('保存成功'); } catch (e) { ElementPlus.ElMessage.error('失败: ' + (e.response?.data?.detail || e.message)) } };
 
                 // === Member Logic ===
@@ -1039,6 +1073,7 @@
                 const missingAssignmentRoles = (episode) => {
                     const roles = [];
                     if (!episode.translator) roles.push('翻译');
+                    if (episode.needs_proofreading && episode.status <= 2 && !episode.proofreader) roles.push('校对');
                     if (!episode.typesetter) roles.push('嵌字');
                     return roles;
                 };
@@ -1085,10 +1120,10 @@
 
                 const fmtDate = (d) => d ? new Date(d).toLocaleDateString().slice(5) : '-';
                 const isOver = (d, active) => active && d && new Date(d) < new Date();
-                onMounted(checkAuth);
+                onMounted(() => { loadCurrentUser(); fetchData(); });
 
                 return {
-                    loading, authorized, authPassword, handleLogin, logout,
+                    loading, logout, currentUser,
                     activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB, settingsList,
                     dialogs, forms, stages, filters, memberKeyword,
                     openCreateProject, openEditProject, submitProject, handleDelProject, handleDelEpisode,

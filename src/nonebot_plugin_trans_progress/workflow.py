@@ -15,9 +15,6 @@ STAGE_DETAILS = {
     3: ("嵌字", "typesetter", "ddl_type"),
     4: ("监修", "supervisor", "ddl_supervision"),
 }
-SKIPPABLE_UNASSIGNED_STAGES = {2}
-
-
 async def complete_episode(
     episode: Episode,
     actor_qq: str,
@@ -45,10 +42,12 @@ async def complete_episode(
     assignee = getattr(episode, assignee_field)
     future_assignees = [
         getattr(episode, field)
-        for _, field, _ in (
-            STAGE_DETAILS[stage] for stage in range(current_status, 5)
-        )
+        for stage, (_, field, _) in STAGE_DETAILS.items()
+        if stage >= current_status
+        if stage != 2 or episode.needs_proofreading
     ]
+    if current_status == 2 and episode.needs_proofreading and not assignee:
+        raise ValueError("校对尚未分配负责人，请先分配校对人或将本话设为无需校对")
     can_submit = any(
         user and user.qq_id == str(actor_qq) for user in future_assignees
     )
@@ -70,16 +69,16 @@ async def complete_episode(
 
         next_role, next_field, next_ddl_field = STAGE_DETAILS[episode.status]
         next_user = getattr(episode, next_field)
-        if next_user or episode.status not in SKIPPABLE_UNASSIGNED_STAGES:
-            if (
-                next_user
-                and
-                not episode.project.auto_schedule
-                and getattr(episode, next_ddl_field) is None
-            ):
-                setattr(episode, next_ddl_field, get_default_ddl())
-            break
-        skipped_stages.append(next_role)
+        if episode.status == 2 and not episode.needs_proofreading:
+            skipped_stages.append(next_role)
+            continue
+        if (
+            next_user
+            and not episode.project.auto_schedule
+            and getattr(episode, next_ddl_field) is None
+        ):
+            setattr(episode, next_ddl_field, get_default_ddl())
+        break
 
     await episode.save()
     if episode.status < 5:
@@ -87,7 +86,7 @@ async def complete_episode(
 
     result_lines = [f"{episode.project.name} {episode.title}", f"{stage_name}已完成"]
     if skipped_stages:
-        result_lines.append(f"已自动跳过未分配工序：{'、'.join(skipped_stages)}")
+        result_lines.append(f"已按设置跳过无需校对工序：{'、'.join(skipped_stages)}")
     if not allow_privileged and (not assignee or assignee.qq_id != str(actor_qq)):
         result_lines.append(f"由 {actor_name} 代提交")
     mentioned_qq_ids = set()
@@ -118,6 +117,12 @@ async def complete_episode(
             result_lines.append(f"截止日期: {next_ddl.strftime('%m-%d')}")
         if next_user:
             mentioned_qq_ids.add(next_user.qq_id)
+        elif episode.status == 2 and episode.needs_proofreading:
+            result_lines.append("校对尚未分配负责人，已暂停推进；分配后开始校对期限")
+            if episode.project.leader:
+                mentioned_qq_ids.add(episode.project.leader.qq_id)
+            else:
+                result_lines.append("请组长或管理员分配校对负责人")
         else:
             result_lines.append("下一阶段尚未分配负责人")
 

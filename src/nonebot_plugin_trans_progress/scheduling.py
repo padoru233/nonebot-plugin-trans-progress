@@ -17,7 +17,7 @@ def deadline_from_start(start_time: datetime) -> datetime:
 
 async def initialize_episode_schedule(episode: Episode, now: datetime | None = None):
     """Schedule only the oldest unfinished episode's current stage."""
-    await episode.fetch_related("project")
+    await episode.fetch_related("project", "proofreader")
     if not episode.project.auto_schedule:
         return
 
@@ -29,6 +29,17 @@ async def initialize_episode_schedule(episode: Episode, now: datetime | None = N
 
     stage = episode.status
     if stage not in STAGE_TIMING_FIELDS:
+        return
+    if stage == 2 and not episode.needs_proofreading:
+        return
+    if stage == 2 and not episode.proofreader:
+        changed = False
+        for field in ("started_proof", "ddl_proof"):
+            if getattr(episode, field) is not None:
+                setattr(episode, field, None)
+                changed = True
+        if changed:
+            await episode.save()
         return
 
     base_time = now or datetime.now()

@@ -23,7 +23,8 @@ from .catalog_store import (
     is_catalog_generation_enabled,
 )
 from .workflow import complete_episode
-from .web import api_router, public_router
+from .web import LOGIN_PATH, api_router, get_auth_configuration_error, public_router
+from .auth_pages import render_auth_page
 from .config import Config
 from . import scheduler
 from .view_renderer import (
@@ -37,8 +38,9 @@ from .view_renderer import (
 )
 
 try:
-    from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
+    from fastapi import FastAPI, Request
+    from fastapi.responses import HTMLResponse, RedirectResponse
+    from starlette.middleware.sessions import SessionMiddleware
 except ImportError:
     FastAPI = None
 
@@ -49,11 +51,13 @@ MODELS_PATH = [f"{__name__}.models"]
 
 SCHEDULE_MIGRATION = """
 ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS auto_schedule BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS needs_proofreading BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS standalone_episodes BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS cover_url VARCHAR(2048);
 ALTER TABLE trans_projects ADD COLUMN IF NOT EXISTS zaimanhua_url VARCHAR(2048);
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS cover_url VARCHAR(2048);
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS zaimanhua_url VARCHAR(2048);
+ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS needs_proofreading BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_trans TIMESTAMPTZ;
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_proof TIMESTAMPTZ;
 ALTER TABLE trans_episodes ADD COLUMN IF NOT EXISTS started_type TIMESTAMPTZ;
@@ -119,10 +123,29 @@ async def init_web():
         docs_url="/docs",
         openapi_url="/openapi.json"
     )
+    auth_configuration_error = get_auth_configuration_error()
+    if auth_configuration_error:
+        logger.error(auth_configuration_error)
+    sub_app.add_middleware(
+        SessionMiddleware,
+        secret_key=plugin_config.trans_auth_session_secret or "invalid-configuration",
+        session_cookie="trans_admin_session",
+        max_age=plugin_config.trans_auth_session_max_age,
+        same_site="lax",
+        https_only=True,
+    )
 
-    # 手动添加首页路由 (无锁)
+    # 手动添加首页路由
     @sub_app.get("/", response_class=HTMLResponse)
-    async def index_page():
+    async def index_page(request: Request):
+        if get_auth_configuration_error():
+            return render_auth_page(
+                "登录尚未配置",
+                "Bot 后台的萌翻登录配置不完整，请联系管理员检查服务端日志。",
+                status_code=503,
+            )
+        if "trans_admin" not in request.session:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
         template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
         if os.path.exists(template_path):
             with open(template_path, "r", encoding="utf-8") as f:
@@ -310,7 +333,7 @@ async def _(matcher: Matcher):
             ),
             RenderModule("我的项目", ["我的项目：显示当前群内你参与的未完成话数和截止日期"]),
             RenderModule("项目搜索", ["仅搜索当前群绑定的项目", "依次匹配：列表序号、名称、别称/标签、模糊关键词"]),
-            RenderModule("完成任务", ["完成 <项目> <话数> 或 完成<项目><话数>", "快捷完成：<项目> <话数> 好了", "完成后会自动提醒下一位负责人"]),
+            RenderModule("完成任务", ["完成 <项目> <话数> 或 完成<项目><话数>", "快捷完成：<项目> <话数> 好了", "完成后会自动提醒下一位负责人", "需要校对但未分配校对人时会暂停在校对并提醒组长"]),
             RenderModule("后台管理", ["http://<你的IP>:8080/trans/", "开新坑、分配成员和设置死线"]),
         ],
         palette=MINT_PALETTE,
@@ -441,6 +464,13 @@ async def handle_episode_completion(
             "没有提交权限",
             [RenderModule("当前负责人", str(error).splitlines())],
             palette=CORAL_PALETTE,
+        )
+    except ValueError as error:
+        await finish_image(
+            matcher,
+            "暂不能提交",
+            [RenderModule("需要处理", [str(error)])],
+            palette=AMBER_PALETTE,
         )
 
 @cmd_finish.handle()

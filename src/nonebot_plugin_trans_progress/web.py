@@ -1,10 +1,15 @@
+import base64
+import hashlib
+import secrets
 from datetime import datetime
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
 import unicodedata
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Depends, Header, Request
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from nonebot import get_bots, logger, get_plugin_config
@@ -26,6 +31,7 @@ from .scheduling import (
     record_stage_completion,
 )
 from .config import Config
+from .auth_pages import render_auth_page
 from .broadcast import check_and_send_broadcast
 from .catalog_store import get_or_generate_public_catalog, mark_public_catalog_dirty
 from .zaimanhua import ZaiManhuaMetadataError, get_metadata
@@ -33,13 +39,183 @@ from .zaimanhua import ZaiManhuaMetadataError, get_metadata
 
 plugin_config = get_plugin_config(Config)
 
-async def verify_token(x_auth_token: str = Header(..., alias="X-Auth-Token")):
-    if x_auth_token != plugin_config.trans_auth_password:
-        raise HTTPException(status_code=401, detail="Invalid Password")
-    return x_auth_token
+LOGIN_PATH = "/trans/auth/moeflow/login"
 
-api_router = APIRouter(dependencies=[Depends(verify_token)])
+
+def get_auth_configuration_error() -> str | None:
+    missing = [
+        name
+        for name, value in {
+            "MOEFLOW_WEB_URL": plugin_config.moeflow_web_url,
+            "TRANS_MOEFLOW_CLIENT_SECRET": plugin_config.trans_moeflow_client_secret,
+            "TRANS_MOEFLOW_REDIRECT_URI": plugin_config.trans_moeflow_redirect_uri,
+            "TRANS_AUTH_SESSION_SECRET": plugin_config.trans_auth_session_secret,
+        }.items()
+        if not value
+    ]
+    if missing:
+        return f"缺少萌翻登录配置：{', '.join(missing)}"
+    return None
+
+
+def require_auth_configuration() -> None:
+    if error := get_auth_configuration_error():
+        raise HTTPException(status_code=503, detail=error)
+
+
+async def require_admin_session(request: Request) -> dict[str, str]:
+    require_auth_configuration()
+    user = request.session.get("trans_admin")
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="请先使用萌翻账号登录")
+    subject = user.get("subject")
+    name = user.get("name")
+    if not isinstance(subject, str) or not isinstance(name, str):
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="登录会话无效")
+    return {"subject": subject, "name": name}
+
+
+def create_code_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+api_router = APIRouter(dependencies=[Depends(require_admin_session)])
 public_router = APIRouter()
+
+
+@public_router.get("/auth/moeflow/login")
+async def login_with_moeflow(request: Request):
+    require_auth_configuration()
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    request.session.clear()
+    request.session["moeflow_oauth_state"] = state
+    request.session["moeflow_oauth_verifier"] = verifier
+
+    query = urlencode(
+        {
+            "client_id": plugin_config.trans_moeflow_client_id,
+            "redirect_uri": plugin_config.trans_moeflow_redirect_uri,
+            "state": state,
+            "code_challenge": create_code_challenge(verifier),
+        }
+    )
+    return RedirectResponse(
+        f"{plugin_config.moeflow_web_url.rstrip('/')}/authorize?{query}",
+        status_code=303,
+    )
+
+
+def login_error_page(
+    title: str, message: str, status_code: int, details: list[str] | None = None
+):
+    return render_auth_page(
+        title,
+        message,
+        status_code=status_code,
+        details=details,
+        actions=[("重新登录", LOGIN_PATH, True)],
+    )
+
+
+@public_router.get("/auth/moeflow/callback")
+async def moeflow_login_callback(
+    request: Request, code: str | None = None, state: str | None = None
+):
+    require_auth_configuration()
+    expected_state = request.session.pop("moeflow_oauth_state", None)
+    verifier = request.session.pop("moeflow_oauth_verifier", None)
+    # compare_digest 对含非 ASCII 的 str 会抛 TypeError，所以比较字节
+    if (
+        not code
+        or not state
+        or not isinstance(expected_state, str)
+        or not isinstance(verifier, str)
+        or not secrets.compare_digest(state.encode(), expected_state.encode())
+    ):
+        return login_error_page(
+            "登录已失效", "登录请求已过期或与当前浏览器不匹配，请重新登录。", 400
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{plugin_config.moeflow_api_url.rstrip('/')}/v1/bot-authorization/tokens",
+                json={
+                    "client_id": plugin_config.trans_moeflow_client_id,
+                    "client_secret": plugin_config.trans_moeflow_client_secret,
+                    "redirect_uri": plugin_config.trans_moeflow_redirect_uri,
+                    "code": code,
+                    "code_verifier": verifier,
+                },
+            )
+            response.raise_for_status()
+            identity = response.json()
+    except httpx.HTTPError as exc:
+        logger.warning(f"萌翻授权码交换失败：{exc}")
+        return login_error_page(
+            "无法验证登录", "暂时无法向萌翻确认你的身份，请稍后重试或联系管理员。", 502
+        )
+    except ValueError as exc:
+        logger.warning(f"萌翻授权码交换返回了无效响应：{exc}")
+        return login_error_page(
+            "无法验证登录", "萌翻返回了无法识别的身份信息，请联系管理员。", 502
+        )
+
+    subject = identity.get("subject") if isinstance(identity, dict) else None
+    name = identity.get("name") if isinstance(identity, dict) else None
+    admin = identity.get("admin") if isinstance(identity, dict) else None
+    if (
+        not isinstance(subject, str)
+        or not isinstance(name, str)
+        or not isinstance(admin, bool)
+    ):
+        return login_error_page(
+            "无法验证登录", "萌翻返回了不完整的身份信息，请联系管理员。", 502
+        )
+    if not admin and subject not in plugin_config.trans_moeflow_allowed_subjects:
+        logger.warning(f"拒绝未授权的萌翻账号登录后台：{subject}")
+        return render_auth_page(
+            "没有访问权限",
+            "此萌翻账号未获准访问 Bot 后台。",
+            status_code=403,
+            details=[
+                f"当前萌翻账号：{name}",
+                f"用户 ID：{subject}",
+                "请把用户 ID 发给管理员，由其加入 TRANS_MOEFLOW_ALLOWED_SUBJECTS。",
+                "如需更换账号，请先在萌翻网站退出登录。",
+            ],
+            actions=[
+                ("重新登录", LOGIN_PATH, True),
+                ("前往萌翻", plugin_config.moeflow_web_url or "/", False),
+            ],
+        )
+
+    request.session.clear()
+    request.session["trans_admin"] = {"subject": subject, "name": name}
+    return RedirectResponse("/trans/", status_code=303)
+
+
+@api_router.get("/auth/me")
+async def current_admin(admin: dict[str, str] = Depends(require_admin_session)):
+    return admin
+
+
+@public_router.post("/auth/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return {"message": "已退出登录"}
+
+
+@public_router.get("/auth/logged-out")
+async def logged_out():
+    return render_auth_page(
+        "已退出登录",
+        "你已退出 Bot 后台。这不会退出你的萌翻账号，再次登录时可能无需重新输入密码。",
+        actions=[("重新登录", LOGIN_PATH, True)],
+    )
 
 
 def get_public_catalog_allowed_origins() -> set[str]:
@@ -81,6 +257,7 @@ class ProjectCreate(BaseModel):
     zaimanhua_url: Optional[str] = None
     group_id: str
     auto_schedule: bool = True
+    needs_proofreading: bool = True
     standalone_episodes: bool = False
     leader_qq: Optional[str] = None
     default_translator_qq: Optional[str] = None
@@ -94,6 +271,7 @@ class ProjectUpdate(BaseModel):
     tags: List[str] = []
     zaimanhua_url: Optional[str] = None
     auto_schedule: bool = True
+    needs_proofreading: Optional[bool] = None
     # 为 None 表示调用方未提供，保持原值
     standalone_episodes: Optional[bool] = None
     leader_qq: Optional[str] = None
@@ -110,6 +288,7 @@ class EpisodeCreate(BaseModel):
     project_name: str
     title: str
     zaimanhua_url: Optional[str] = None
+    needs_proofreading: Optional[bool] = None
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -123,6 +302,7 @@ class EpisodeUpdate(BaseModel):
     title: str
     status: int
     zaimanhua_url: Optional[str] = None
+    needs_proofreading: Optional[bool] = None
     translator_qq: Optional[str] = None
     proofreader_qq: Optional[str] = None
     typesetter_qq: Optional[str] = None
@@ -411,6 +591,7 @@ async def get_projects():
         for e in eps:
             ep_list.append({
                 "id": e.id, "title": e.title, "status": e.status,
+                "needs_proofreading": e.needs_proofreading,
                 "zaimanhua_url": e.zaimanhua_url,
                 "ddl_trans": e.ddl_trans, "ddl_proof": e.ddl_proof, "ddl_type": e.ddl_type,
                 "ddl_supervision": e.ddl_supervision,
@@ -439,6 +620,7 @@ async def get_projects():
             "group_name": real_group_name,
             "leader": {"name": p.leader.name, "qq_id": p.leader.qq_id} if p.leader else None,
             "auto_schedule": p.auto_schedule,
+            "needs_proofreading": p.needs_proofreading,
             "standalone_episodes": p.standalone_episodes,
             "defaults": defaults,
             "episodes": ep_list
@@ -520,6 +702,7 @@ async def create_project(proj: ProjectCreate):
         cover_url=metadata.cover_url if metadata else None,
         zaimanhua_url=metadata.detail_url if metadata else None,
         auto_schedule=proj.auto_schedule,
+        needs_proofreading=proj.needs_proofreading,
         standalone_episodes=proj.standalone_episodes,
         group_id=gid, group_name=g_name, leader=leader,
         default_translator=d_trans, default_proofreader=d_proof, default_typesetter=d_type,
@@ -554,6 +737,11 @@ async def update_project(id: int, form: ProjectUpdate):
         p.zaimanhua_url = None
         p.cover_url = None
     p.auto_schedule = form.auto_schedule
+    if (
+        "needs_proofreading" in form.model_fields_set
+        and form.needs_proofreading is not None
+    ):
+        p.needs_proofreading = form.needs_proofreading
     if form.standalone_episodes is not None:
         p.standalone_episodes = form.standalone_episodes
 
@@ -584,7 +772,9 @@ async def ensure_episode(form: EpisodeEnsure):
     episode = await Episode.get_or_none(project=project, title=form.title)
     default_assignees = await get_project_default_assignees(project)
     if episode:
-        await apply_missing_default_assignees(episode, default_assignees)
+        changed = await apply_missing_default_assignees(episode, default_assignees)
+        if changed:
+            await initialize_episode_schedule(episode)
         return {
             "status": "success",
             "created": False,
@@ -596,6 +786,7 @@ async def ensure_episode(form: EpisodeEnsure):
         project=project,
         title=form.title,
         status=1,
+        needs_proofreading=project.needs_proofreading,
         **default_assignees,
     )
     await initialize_episode_schedule(episode)
@@ -634,10 +825,18 @@ async def add_episode(ep: EpisodeCreate):
 
     episode = await Episode.create(
         project=project, title=ep.title, status=1,
+        needs_proofreading=(
+            project.needs_proofreading
+            if ep.needs_proofreading is None
+            else ep.needs_proofreading
+        ),
         zaimanhua_url=metadata.detail_url if metadata else None,
         cover_url=metadata.cover_url if metadata else None,
         translator=trans, proofreader=proof, typesetter=type_, supervisor=super_,
-        ddl_trans=dt_trans, ddl_proof=dt_proof, ddl_type=dt_type, ddl_supervision=dt_super
+        ddl_trans=None if project.auto_schedule else dt_trans,
+        ddl_proof=None if project.auto_schedule else dt_proof,
+        ddl_type=None if project.auto_schedule else dt_type,
+        ddl_supervision=None if project.auto_schedule else dt_super,
     )
     if project.auto_schedule:
         await initialize_episode_schedule(episode)
@@ -679,15 +878,32 @@ async def update_episode(id: int, form: EpisodeUpdate):
     if ep.title != form.title:
         changes.append(f"标题: {ep.title} -> {form.title}")
 
+    needs_proofreading = ep.needs_proofreading
+    if "needs_proofreading" in form.model_fields_set:
+        needs_proofreading = (
+            ep.project.needs_proofreading
+            if form.needs_proofreading is None
+            else form.needs_proofreading
+        )
+
+    new_status = form.status
+    skipped_proofreading = (
+        ep.status == 2 and new_status == 2 and not needs_proofreading
+    )
+    if skipped_proofreading:
+        new_status = 3
+
     status_map = {0: '未开始', 1: '翻译', 2: '校对', 3: '嵌字', 4: '监修', 5: '完结'}
-    if ep.status != form.status:
+    if ep.status != new_status:
         old_s = status_map.get(ep.status, str(ep.status))
-        new_s = status_map.get(form.status, str(form.status))
+        new_s = status_map.get(new_status, str(new_status))
         changes.append(f"状态: {old_s} -> {new_s}")
-        if form.status == 1 and new_trans: mentions_qq.add(new_trans.qq_id)
-        elif form.status == 2 and new_proof: mentions_qq.add(new_proof.qq_id)
-        elif form.status == 3 and new_type: mentions_qq.add(new_type.qq_id)
-        elif form.status == 4 and new_super: mentions_qq.add(new_super.qq_id)
+        if new_status == 1 and new_trans: mentions_qq.add(new_trans.qq_id)
+        elif new_status == 2 and new_proof: mentions_qq.add(new_proof.qq_id)
+        elif new_status == 3 and new_type: mentions_qq.add(new_type.qq_id)
+        elif new_status == 4 and new_super: mentions_qq.add(new_super.qq_id)
+    if skipped_proofreading:
+        changes.append("本话无需校对，已自动跳过校对阶段")
 
     def check_role_change(label, old_u, new_u, old_ddl, new_ddl):
         old_uid = old_u.id if old_u else None
@@ -709,7 +925,9 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.title = form.title
     ep.zaimanhua_url = new_zaimanhua_url
     ep.cover_url = new_cover_url
-    ep.status = form.status
+    ep.status = new_status
+    if "needs_proofreading" in form.model_fields_set:
+        ep.needs_proofreading = needs_proofreading
     ep.translator = new_trans
     ep.proofreader = new_proof
     ep.typesetter = new_type
@@ -719,6 +937,10 @@ async def update_episode(id: int, form: EpisodeUpdate):
     ep.ddl_type = new_ddl_type
     ep.ddl_supervision = new_ddl_super
     await ep.save()
+    if skipped_proofreading:
+        await record_stage_completion(ep, 2)
+    if ep.project.auto_schedule and ep.status < 5:
+        await initialize_episode_schedule(ep)
 
     if changes:
         await notify_episode_updated(ep.project, ep, gid, changes, mentions_qq)

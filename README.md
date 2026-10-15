@@ -98,7 +98,13 @@
 | 配置项  | 必填  | 默认值 |   说明   |
 | :-----: | :---: | :----: | :------: |
 | TRANS_DB_URL |  是   |   无   | 见下 |
-| TRANS_AUTH_PASSWORD |  是   |   admin   | Web访问密码 |
+| MOEFLOW_API_URL | 是 | 无 | 萌翻 Bot 授权 API 地址，不带尾部斜杠；使用域名 `/bot-auth` 前缀 |
+| MOEFLOW_WEB_URL | 是 | 无 | 萌翻前端地址，不带尾部斜杠 |
+| TRANS_MOEFLOW_CLIENT_ID | 否 | `trans-progress` | 萌翻中登记的 Bot 授权客户端 ID |
+| TRANS_MOEFLOW_CLIENT_SECRET | 是 | 无 | 对应客户端密钥，仅保存在 Bot 服务端 |
+| TRANS_MOEFLOW_REDIRECT_URI | 是 | 无 | Bot 登录回调地址，必须与萌翻登记值完全一致 |
+| TRANS_AUTH_SESSION_SECRET | 是 | 无 | 随机、高强度的 Bot 后台会话签名密钥 |
+| TRANS_MOEFLOW_ALLOWED_SUBJECTS | 否 | `[]` | 可进入后台的萌翻用户 ID JSON 数组；萌翻站点管理员始终允许 |
 | TRANS_PUBLIC_CATALOG_ENABLED | 否 | `false` | 是否开放无鉴权的漫画进度目录 JSON |
 | TRANS_PUBLIC_CATALOG_ALLOW_ORIGIN | 否 | `https://keli.love` | 可跨域读取目录的前端来源 |
 | TRANS_PUBLIC_CATALOG_CACHE_SECONDS | 否 | `60` | 浏览器缓存目录的秒数 |
@@ -125,24 +131,36 @@
 
 项目名和别名可以包含空格；Bot 会优先按完整名称或别名最长匹配，再解析剩余话数。
 
-未分配负责人的**校对**工序会在前一工序提交后自动跳过。例如某话没有校对时，翻译提交后会直接进入嵌字。
+项目可以设置新话数是否默认需要校对；创建话数时会带入该设置，之后每话也可以单独调整。需要校对但未分配校对人时，翻译提交后会停在校对并提醒组长分配；校对期限在分配负责人后才开始。明确设置为无需校对的话数才会自动跳过校对。
 翻译、嵌字和监修即使暂未分配负责人也会保留为当前工序，等待补充负责人或由组长、管理员代提交。
 未明确指定默认监修时，项目组长会自动作为新话数的监修负责人；显式指定的默认监修优先。
 当前工序负责人、后续工序负责人、项目组长或群管理员均可提交；后续负责人提交时会在通知中标记为代提交。
 
 开启自动排期时，系统只会为最早未完结话数的当前工序设置截止日期。后续工序和其他话数不会预先写入日期；
-当前工序完成并进入下一工序后，才会为新的当前工序安排日期。
+当前工序完成并进入下一工序后，才会为新的当前工序安排日期。需要校对但未分配校对人时，校对期限暂不开始。
 
 ### 后台管理
 
 插件在 NoneBot 的 ASGI 服务下挂载管理后台。默认服务端口为 `8080` 时，访问地址为 `http://<服务器IP>:8080/trans/`；如 NoneBot 配置了其他端口，请替换地址中的端口号。
 
-对接 Moeflow 时，请在 Moeflow 中填写上述 Bot 后台地址；Bot 侧无需配置 Moeflow URL。
+后台登录必须通过 HTTPS 部署，因为登录会话 Cookie 仅通过 HTTPS 发送。配置萌翻授权客户端时，将
+`TRANS_MOEFLOW_REDIRECT_URI` 精确登记为例如
+`https://bot.example.com/trans/auth/moeflow/callback`，并在萌翻后端设置：
+
+```env
+BOT_AUTHORIZATION_CLIENTS={"trans-progress":{"secret":"与_TRANS_MOEFLOW_CLIENT_SECRET_相同的随机密钥","redirect_uris":["https://bot.example.com/trans/auth/moeflow/callback"]}}
+```
+
+将 Bot 的 `MOEFLOW_API_URL` 配置为萌翻专用的 `/bot-auth` 反向代理地址，例如
+`https://moeflow.example.com/bot-auth`；不要使用萌翻现有的 `/api` 前缀。
+
+Bot 与萌翻均配置完成后，访问 `/trans/` 会跳转到萌翻登录页。萌翻站点管理员可直接进入；
+其他用户必须将萌翻用户 ID 加入 `TRANS_MOEFLOW_ALLOWED_SUBJECTS`。Bot 不保存萌翻密码或访问令牌。
 
 在 Moeflow 中删除项目集不会通知 Bot，Bot 里的同名作品集和话数会保留；之后在 Moeflow 重建同名项目集时会复用它们。
 需要清理时，请在 Bot 后台用作品集上的删除按钮手动删除（会连同下面的全部话数一起删除）。
 
-使用 `TRANS_AUTH_PASSWORD` 登录后，可新建项目和话数、分配成员、设置截止日期，以及管理每日播报。
+通过萌翻账号登录后，可新建项目和话数、分配成员、设置截止日期，以及管理每日播报。
 每一话、每个作品集都有删除按钮，删除前会弹出确认框，写明将删除的内容；删除作品集会同时删除其下全部话数。
 
 ### 公开进度目录
