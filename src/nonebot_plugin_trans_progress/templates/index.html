@@ -132,13 +132,92 @@
 
         .project-info {
             display: flex;
-            align-items: center;
-            gap: 8px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 5px;
             flex-grow: 1;
             min-width: 200px;
         }
 
-        .project-info > span:first-child { color: var(--ink); font-size: 17px; }
+        .project-title-row,
+        .project-meta-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .project-name { color: var(--ink); font-size: 17px; font-weight: 600; }
+        .project-count { color: var(--muted-ink); font-size: 13px; }
+        .project-aliases { color: var(--muted-ink); font-size: 13px; }
+
+        .list-summary {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin: 0 2px 10px;
+            color: var(--muted-ink);
+            font-size: 13px;
+        }
+        .list-summary .el-button { height: auto; padding: 0; }
+
+        .toolbar-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 8px;
+            padding-top: 12px;
+            border-top: 1px dashed var(--line);
+        }
+        .toolbar-toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        .group-section { margin-bottom: 22px; }
+        .group-header {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border: 1px solid var(--line);
+            border-left: 4px solid var(--navy);
+            border-radius: 8px;
+            background: #eaf1f8;
+            cursor: pointer;
+            user-select: none;
+        }
+        .group-header:hover { background: #e2ecf6; }
+        .group-caret { color: var(--muted-ink); transition: transform 0.15s; }
+        .group-caret.open { transform: rotate(90deg); }
+        .group-title {
+            display: flex;
+            align-items: baseline;
+            flex-wrap: wrap;
+            flex-grow: 1;
+            gap: 8px;
+            min-width: 0;
+        }
+        .group-name { color: var(--navy); font-size: 18px; font-weight: 700; }
+        .group-id { color: var(--muted-ink); font-family: monospace; font-size: 12px; }
+        .group-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .episode-mobile-extra { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 8px; }
+
+        .stage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+        .stage-grid .stage-box {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: center;
+            column-gap: 6px;
+            row-gap: 2px;
+            margin: 0;
+        }
+        .stage-grid .stage-box .label { width: auto; margin-right: 0; }
+        .stage-grid .stage-box .user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stage-grid .stage-box .date { grid-column: 1 / -1; }
+        .stage-grid .stage-box .user.unassigned { color: #a8abb2; font-weight: 400; }
 
         .current-progress {
             --progress-color: #409eff;
@@ -168,7 +247,7 @@
         .filter-toggle { display: flex; align-items: center; min-height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: #fafcff; }
         .filter-toggle.warning { border-color: #f4c978; background: #fff9ed; }
         .episode-table .el-table__row.needs-assignment-row > td.el-table__cell { background: #fffaf0 !important; }
-        .episode-title { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+        .episode-title { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-weight: 700; }
         .assignment-alert { margin: 0 0 8px; color: #9a5a00; font-size: 12px; font-weight: 700; }
         .assignment-alert .el-icon { vertical-align: -2px; margin-right: 3px; }
 
@@ -336,7 +415,9 @@
             .workspace-toolbar, .member-toolbar, .settings-panel, .member-panel { padding: 12px; }
             .el-collapse-item__header { padding: 10px; }
             .el-collapse-item__content { padding: 8px 10px 12px; }
-            .project-info > span:first-child { width: 100%; }
+            .project-name { width: 100%; }
+            .stage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .group-header { padding: 8px 10px; }
             .project-header { align-items: flex-start; }
             .project-header > div:last-child { margin-left: auto; margin-right: 0 !important; }
             .filter-toggle { margin-top: 5px; }
@@ -434,6 +515,14 @@
                                         prefix-icon="Search" clearable></el-input>
                                 </el-col>
                                 <el-col :span="6" :xs="12" style="margin-bottom:5px">
+                                    <span class="toolbar-label">所属群</span>
+                                    <el-select v-model="filters.group" placeholder="全部群" clearable filterable
+                                        style="width:100%">
+                                        <el-option v-for="g in projectGroups" :key="g.group_id"
+                                            :label="g.name" :value="g.group_id"></el-option>
+                                    </el-select>
+                                </el-col>
+                                <el-col :span="6" :xs="12" style="margin-bottom:5px">
                                     <span class="toolbar-label">项目标签</span>
                                     <el-select v-model="filters.tag" placeholder="项目标签" clearable filterable
                                         style="width:100%">
@@ -441,12 +530,12 @@
                                             :value="t"></el-option>
                                     </el-select>
                                 </el-col>
-                                <el-col :span="6" :xs="12" style="margin-bottom:5px">
+                                <el-col :span="6" :xs="24" style="margin-bottom:5px">
                                     <span class="toolbar-label">参与成员</span>
-                                    <div style="display: flex; align-items: center; gap: 5px;">
+                                    <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 5px;">
                                         <el-select v-model="filters.member" placeholder="参与人员(搜名/Tag)" clearable
                                             filterable :filter-method="filterMemberMethod"
-                                            @visible-change="(v)=>{if(!v)memberKeyword=''}" style="flex-grow: 1;">
+                                            @visible-change="(v)=>{if(!v)memberKeyword=''}" style="flex: 1 1 160px; min-width: 160px;">
                                             <el-option v-for="m in memberOptions" :key="m.qq_id" :label="m.name"
                                                 :value="m.qq_id">
                                                 <span>{{ m.name }}</span>
@@ -463,45 +552,72 @@
                                         </el-tooltip>
                                     </div>
                                 </el-col>
-                                <el-col :span="6" :xs="24" style="text-align: right;">
-                                    <span class="toolbar-label" style="text-align: left;">显示选项</span>
-                                    <div style="display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;">
+                            </el-row>
+                            <div class="toolbar-actions">
+                                <div class="toolbar-toggles">
                                     <div class="filter-toggle"><el-checkbox v-model="filters.hideCompleted" label="隐藏完结" size="small"
                                         style="margin: 0; white-space: nowrap;"></el-checkbox></div>
                                     <div class="filter-toggle warning"><el-checkbox v-model="filters.needsAssignment" label="待补翻/嵌" size="small"
                                         style="margin: 0; white-space: nowrap;"></el-checkbox></div>
-                                    <el-button type="primary" @click="openCreateProject" icon="Plus">新建项目</el-button>
-                                    </div>
-                                </el-col>
-                            </el-row>
+                                </div>
+                                <el-button type="primary" @click="openCreateProject()" icon="Plus">新建项目</el-button>
+                            </div>
                         </div>
 
                         <div v-if="filteredProjects.length === 0" class="empty-state">没有找到匹配的项目</div>
+                        <div v-else class="list-summary">
+                            <span>共 {{ groupedProjects.length }} 个群 · {{ filteredProjects.length }} 个项目</span>
+                            <el-button link type="primary" @click="toggleAllGroups(false)">全部展开</el-button>
+                            <el-button link type="primary" @click="toggleAllGroups(true)">全部收起</el-button>
+                        </div>
 
-                        <el-collapse v-model="activeCollapse" class="project-list">
-                            <el-collapse-item v-for="p in filteredProjects" :key="p.id" :name="p.name">
+                        <section v-for="g in groupedProjects" :key="g.group_id" class="group-section">
+                            <header class="group-header" @click="toggleGroup(g.group_id)">
+                                <el-icon class="group-caret" :class="{ open: !collapsedGroups[g.group_id] }">
+                                    <arrow-right />
+                                </el-icon>
+                                <div class="group-title">
+                                    <span class="group-name">{{ g.name }}</span>
+                                    <span class="group-id">{{ g.group_id }}</span>
+                                </div>
+                                <div class="group-stats">
+                                    <el-tag size="small" effect="plain">{{ g.projects.length }} 个项目</el-tag>
+                                    <el-tag size="small" effect="plain" type="success">进行中 {{ g.active }} 话</el-tag>
+                                    <el-tag v-if="g.needsAssignment" size="small" type="warning">待补岗 {{ g.needsAssignment }}</el-tag>
+                                    <el-tag v-if="g.overdue" size="small" type="danger">逾期 {{ g.overdue }}</el-tag>
+                                </div>
+                                <div @click.stop>
+                                    <el-button size="small" icon="Plus" @click="openCreateProject(g.group_id)">新建项目</el-button>
+                                </div>
+                            </header>
+
+                        <el-collapse v-if="!collapsedGroups[g.group_id]" v-model="activeCollapse" class="project-list">
+                            <el-collapse-item v-for="p in g.projects" :key="p.id" :name="p.name">
                                 <template #title>
                                     <div class="project-header">
                                         <div class="project-info">
-                                            <span>{{ p.name }}</span>
-                                            <el-tag v-if="getProjectProgress(p)" effect="plain" size="small"
-                                                class="current-progress"
-                                                :style="{ '--progress-color': getProjectProgressColor(getProjectProgress(p).status) }">
-                                                {{ getProjectProgress(p).title }} {{
-                                                ['','翻译','校对','嵌字','监修'][getProjectProgress(p).status] || '' }}
-                                            </el-tag>
-                                            <el-tag v-for="alias in p.aliases" :key="alias" size="small" type="info"
-                                                style="margin-right:4px">{{ alias }}</el-tag>
-                                            <el-tag v-for="tag in p.tags" :key="'t-'+tag" size="small" effect="plain"
-                                                color="#f0f9eb"
-                                                style="color:#67c23a; border-color:#e1f3d8; margin-right:4px">
-                                                <span class="tag-dot" style="background:#67c23a"></span>{{ tag }}
-                                            </el-tag>
-                                            <el-tag v-if="p.standalone_episodes" size="small" type="warning"
-                                                effect="plain" style="margin-right:4px">每话独立展示</el-tag>
-                                            <el-tag size="small" effect="plain">{{ (p.group_name && p.group_name !==
-                                                '未同步') ? (p.group_name + ' (' + p.group_id + ')') : p.group_id
-                                                }}</el-tag>
+                                            <div class="project-title-row">
+                                                <span class="project-name">{{ p.name }}</span>
+                                                <el-tag v-if="getProjectProgress(p)" effect="plain" size="small"
+                                                    class="current-progress"
+                                                    :style="{ '--progress-color': getProjectProgressColor(getProjectProgress(p).status) }">
+                                                    {{ getProjectProgress(p).title }} {{
+                                                    ['','翻译','校对','嵌字','监修'][getProjectProgress(p).status] || '' }}
+                                                </el-tag>
+                                                <span class="project-count">{{ projectStatsMap[p.id].active }} / {{ projectStatsMap[p.id].total }} 话进行中</span>
+                                                <el-tag v-if="projectStatsMap[p.id].overdue" size="small" type="danger">逾期 {{ projectStatsMap[p.id].overdue }}</el-tag>
+                                                <el-tag v-if="projectStatsMap[p.id].needsAssignment" size="small" type="warning">待补岗 {{ projectStatsMap[p.id].needsAssignment }}</el-tag>
+                                                <el-tag v-if="p.standalone_episodes" size="small" type="warning"
+                                                    effect="plain">每话独立展示</el-tag>
+                                            </div>
+                                            <div v-if="(p.aliases && p.aliases.length) || (p.tags && p.tags.length)" class="project-meta-row">
+                                                <span v-if="p.aliases && p.aliases.length" class="project-aliases">别名：{{ p.aliases.join(' / ') }}</span>
+                                                <el-tag v-for="tag in p.tags" :key="'t-'+tag" size="small" effect="plain"
+                                                    color="#f0f9eb"
+                                                    style="color:#67c23a; border-color:#e1f3d8;">
+                                                    <span class="tag-dot" style="background:#67c23a"></span>{{ tag }}
+                                                </el-tag>
+                                            </div>
                                         </div>
                                         <div @click.stop style="margin-right: 10px;">
                                             <el-button size="small" icon="Edit" circle
@@ -516,48 +632,41 @@
                                         style="width: 100%; margin-bottom: 10px;">+ 添加新话</el-button>
                                     <el-table :data="getFilteredEpisodes(p)" :row-class-name="episodeRowClassName"
                                         class="episode-table" border style="width: 100%">
-                                        <el-table-column prop="title" label="话数" width="100">
+                                        <el-table-column prop="title" label="话数" :width="isMobile ? 112 : 120">
                                             <template #default="{row}">
                                                 <div class="episode-title">{{ row.title }}<el-tag v-if="needsAssignment(row)" type="warning" size="small">待补岗</el-tag></div>
+                                                <div v-if="isMobile" class="episode-mobile-extra">
+                                                    <el-tag :class="'status-tag-'+row.status" effect="light" size="small">{{ ['未开始','翻译','校对','嵌字','监修','完结'][row.status] || row.status }}</el-tag>
+                                                    <div>
+                                                        <el-button size="small" icon="Edit" circle
+                                                            @click="openEditEpisode(row, p)"></el-button>
+                                                        <el-button size="small" type="danger" plain icon="Delete" circle
+                                                            title="删除这一话" @click="handleDelEpisode(row, p)"></el-button>
+                                                    </div>
+                                                </div>
                                             </template>
                                         </el-table-column>
-                                        <el-table-column label="状态" width="75" align="center">
+                                        <el-table-column v-if="!isMobile" label="状态" width="86" align="center">
                                             <template #default="{row}">
                                                 <el-tag :key="row.id+'-'+row.status" :class="'status-tag-'+row.status"
-                                                    effect="light" size="small">{{ ['未','翻','校','嵌','监','完'][row.status]
+                                                    effect="light" size="small">{{ ['未开始','翻译','校对','嵌字','监修','完结'][row.status]
                                                     || row.status }}</el-tag>
                                             </template>
                                         </el-table-column>
-                                        <el-table-column label="进度详情">
+                                        <el-table-column label="进度详情" :min-width="isMobile ? 190 : 260">
                                             <template #default="{row}">
                                                 <div v-if="needsAssignment(row)" class="assignment-alert"><el-icon><Warning /></el-icon>未安排：{{ missingAssignmentRoles(row).join('、') }}</div>
-                                                <div class="stage-box"
-                                                    :class="{active: row.status===1, 'stage-1': row.status===1}"><span
-                                                        class="label">翻</span><span class="user">{{ row.translator?.name
-                                                        || '-' }}</span><span class="date"
-                                                        :class="{overdue: isOver(row.ddl_trans, row.status===1)}">{{
-                                                        fmtDate(row.ddl_trans) }}</span></div>
-                                                <div class="stage-box"
-                                                    :class="{active: row.status===2, 'stage-2': row.status===2}"><span
-                                                        class="label">校</span><span class="user">{{
-                                                        row.proofreader?.name || '-' }}</span><span class="date"
-                                                        :class="{overdue: isOver(row.ddl_proof, row.status===2)}">{{
-                                                        fmtDate(row.ddl_proof) }}</span></div>
-                                                <div class="stage-box"
-                                                    :class="{active: row.status===3, 'stage-3': row.status===3}"><span
-                                                        class="label">嵌</span><span class="user">{{ row.typesetter?.name
-                                                        || '-' }}</span><span class="date"
-                                                        :class="{overdue: isOver(row.ddl_type, row.status===3)}">{{
-                                                        fmtDate(row.ddl_type) }}</span></div>
-                                                <div class="stage-box"
-                                                    :class="{active: row.status===4, 'stage-4': row.status===4}"><span
-                                                        class="label">监</span><span class="user">{{ row.supervisor?.name
-                                                        || '-' }}</span><span class="date"
-                                                        :class="{overdue: isOver(row.ddl_supervision, row.status===4)}">{{
-                                                        fmtDate(row.ddl_supervision) }}</span></div>
+                                                <div class="stage-grid">
+                                                    <div v-for="s in stageColumns" :key="s.status" class="stage-box"
+                                                        :class="{ active: row.status === s.status, ['stage-' + s.status]: row.status === s.status }">
+                                                        <span class="label">{{ s.label }}</span>
+                                                        <span class="user" :class="{ unassigned: !row[s.user] }">{{ row[s.user]?.name || '未安排' }}</span>
+                                                        <span class="date" :class="{ overdue: isOver(row[s.date], row.status === s.status) }">{{ fmtDate(row[s.date]) }}</span>
+                                                    </div>
+                                                </div>
                                             </template>
                                         </el-table-column>
-                                        <el-table-column width="100" align="center" fixed="right">
+                                        <el-table-column v-if="!isMobile" width="100" align="center" fixed="right">
                                             <template #default="{row}">
                                                 <el-button size="small" icon="Edit" circle
                                                     @click="openEditEpisode(row, p)"></el-button>
@@ -569,6 +678,7 @@
                                 </div>
                             </el-collapse-item>
                         </el-collapse>
+                        </section>
                     </el-tab-pane>
 
                     <el-tab-pane label="播报设置" name="settings">
@@ -826,6 +936,8 @@
             setup() {
                 const API = '/trans';
                 const loading = ref(false);
+                const isMobile = ref(window.innerWidth <= 768);
+                window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; });
                 const projects = ref([]);
                 const members = ref([]);
                 const botGroupsAll = ref([]);
@@ -835,7 +947,7 @@
                 const activeCollapse = ref([]);
                 const dialogs = reactive({ project: false, episode: false, sync: false, member: false });
 
-                const filters = reactive({ keyword: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false, needsAssignment: false });
+                const filters = reactive({ keyword: '', group: '', tag: '', member: '', hideCompleted: false, onlyMyTurn: false, needsAssignment: false });
                 const memberKeyword = ref('');
 
                 const forms = reactive({
@@ -892,7 +1004,7 @@
                 };
 
                 // === Project Logic ===
-                const openCreateProject = () => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: '', auto_schedule: true, needs_proofreading: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
+                const openCreateProject = (gid) => { forms.project = { id: null, name: '', aliases: [], tags: [], zaimanhua_url: '', group_id: typeof gid === 'string' ? gid : '', auto_schedule: true, needs_proofreading: true, standalone_episodes: false, leader_qq: '', default_translator_qq: '', default_proofreader_qq: '', default_typesetter_qq: '', default_supervisor_qq: '' }; dialogs.project = true; };
                 const openEditProject = (p) => {
                     currentEditingProjectGroupId.value = p.group_id;
                     forms.project = { id: p.id, name: p.name, aliases: p.aliases || [], tags: p.tags || [], zaimanhua_url: p.zaimanhua_url || '', group_id: p.group_id, auto_schedule: p.auto_schedule, needs_proofreading: p.needs_proofreading, standalone_episodes: !!p.standalone_episodes, leader_qq: p.leader?.qq_id || '', default_translator_qq: p.defaults.trans, default_proofreader_qq: p.defaults.proof, default_typesetter_qq: p.defaults.type, default_supervisor_qq: p.defaults.super };
@@ -1008,6 +1120,7 @@
                         const k = filters.keyword.toLowerCase();
                         const matchKw = !k || p.name.toLowerCase().includes(k) || (p.aliases && p.aliases.some(a => a.toLowerCase().includes(k)));
                         const matchTag = !filters.tag || (p.tags && p.tags.includes(filters.tag));
+                        const matchGroup = !filters.group || p.group_id == filters.group;
 
                         let matchMem = true;
                         // 这里我们只做初步的项目级筛选，更细粒度的控制在 getFilteredEpisodes 中处理
@@ -1050,7 +1163,7 @@
 
                         if (filters.needsAssignment && !p.episodes.some(needsAssignment)) return false;
 
-                        return matchKw && matchTag && matchMem;
+                        return matchKw && matchTag && matchGroup && matchMem;
                     });
                 });
 
@@ -1130,10 +1243,70 @@
 
                 const fmtDate = (d) => d ? new Date(d).toLocaleDateString().slice(5) : '-';
                 const isOver = (d, active) => active && d && new Date(d) < new Date();
+
+                // 每个工序对应的状态值、负责人字段和截止日期字段
+                const stageColumns = [
+                    { status: 1, label: '翻译', user: 'translator', date: 'ddl_trans' },
+                    { status: 2, label: '校对', user: 'proofreader', date: 'ddl_proof' },
+                    { status: 3, label: '嵌字', user: 'typesetter', date: 'ddl_type' },
+                    { status: 4, label: '监修', user: 'supervisor', date: 'ddl_supervision' }
+                ];
+                const isInProgress = (e) => e.status >= 1 && e.status <= 4;
+                const isEpisodeOverdue = (e) => {
+                    const stage = stageColumns.find(s => s.status === e.status);
+                    return !!stage && !!isOver(e[stage.date], true);
+                };
+
+                const isNamedGroup = (name) => !!name && name !== '未同步';
+                const groupLabel = (gid, name) => isNamedGroup(name) ? name : `群 ${gid}`;
+                // 已同步群名的群排在前面，未同步的按群号排在最后
+                const compareGroups = (a, b) => (a.named - b.named) * -1 || a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true });
+
+                const projectStatsMap = computed(() => {
+                    const stats = {};
+                    projects.value.forEach(p => {
+                        stats[p.id] = {
+                            total: p.episodes.length,
+                            active: p.episodes.filter(isInProgress).length,
+                            needsAssignment: p.episodes.filter(needsAssignment).length,
+                            overdue: p.episodes.filter(isEpisodeOverdue).length
+                        };
+                    });
+                    return stats;
+                });
+
+                // 可用于筛选的群：只列出确实有项目的群
+                const projectGroups = computed(() => {
+                    const seen = new Map();
+                    projects.value.forEach(p => {
+                        if (!seen.has(p.group_id)) seen.set(p.group_id, { group_id: p.group_id, name: groupLabel(p.group_id, p.group_name), named: isNamedGroup(p.group_name) });
+                    });
+                    return Array.from(seen.values()).sort(compareGroups);
+                });
+
+                const groupedProjects = computed(() => {
+                    const groups = new Map();
+                    filteredProjects.value.forEach(p => {
+                        if (!groups.has(p.group_id)) {
+                            groups.set(p.group_id, { group_id: p.group_id, name: groupLabel(p.group_id, p.group_name), named: isNamedGroup(p.group_name), projects: [], active: 0, needsAssignment: 0, overdue: 0 });
+                        }
+                        const g = groups.get(p.group_id);
+                        const s = projectStatsMap.value[p.id];
+                        g.projects.push(p);
+                        g.active += s.active;
+                        g.needsAssignment += s.needsAssignment;
+                        g.overdue += s.overdue;
+                    });
+                    return Array.from(groups.values()).sort(compareGroups);
+                });
+
+                const collapsedGroups = reactive({});
+                const toggleGroup = (gid) => { collapsedGroups[gid] = !collapsedGroups[gid]; };
+                const toggleAllGroups = (collapse) => { groupedProjects.value.forEach(g => { collapsedGroups[g.group_id] = collapse; }); };
                 onMounted(() => { loadCurrentUser(); fetchData(); });
 
                 return {
-                    loading, logout, currentUser, openMoeflow, isRestricted,
+                    loading, isMobile, fetchData, logout, currentUser, openMoeflow, isRestricted,
                     activeTab, activeCollapse, projects, members, botGroupsAll, botGroupsDB, settingsList,
                     dialogs, forms, stages, filters, memberKeyword,
                     openCreateProject, openEditProject, submitProject, handleDelProject, handleDelEpisode,
@@ -1145,6 +1318,8 @@
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver,
                     getFilteredEpisodes, getProjectProgress, getProjectProgressColor,
+                    stageColumns, projectStatsMap, projectGroups, groupedProjects,
+                    collapsedGroups, toggleGroup, toggleAllGroups,
                     missingAssignmentRoles, needsAssignment, episodeRowClassName
                 };
             }
