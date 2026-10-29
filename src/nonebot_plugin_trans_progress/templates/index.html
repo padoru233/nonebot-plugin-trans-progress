@@ -820,17 +820,61 @@
                     <el-divider content-position="left">默认人员配置</el-divider>
                     <el-row :gutter="10">
                         <el-col :span="12"><el-select v-model="forms.project.default_translator_qq" placeholder="默认翻译"
-                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
-                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                                clearable filterable
+                                :filter-method="(q) => onProjectDefaultMemberFilter(q, 'default_translator_qq')"
+                                @visible-change="(v) => !v && onProjectDefaultMemberFilter('', 'default_translator_qq')"
+                                style="width: 100%">
+                                <el-option v-for="m in getFilteredProjectDefaultMembers('default_translator_qq')" :key="m.qq_id"
+                                    :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id">
+                                    <span style="float: left">{{ m.name }}</span>
+                                    <span v-if="m.tags && m.tags.length"
+                                        style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                        {{ m.tags.join(' ') }}
+                                    </span>
+                                </el-option>
+                            </el-select></el-col>
                         <el-col :span="12"><el-select v-model="forms.project.default_proofreader_qq" placeholder="默认校对"
-                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
-                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                                clearable filterable
+                                :filter-method="(q) => onProjectDefaultMemberFilter(q, 'default_proofreader_qq')"
+                                @visible-change="(v) => !v && onProjectDefaultMemberFilter('', 'default_proofreader_qq')"
+                                style="width: 100%">
+                                <el-option v-for="m in getFilteredProjectDefaultMembers('default_proofreader_qq')" :key="m.qq_id"
+                                    :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id">
+                                    <span style="float: left">{{ m.name }}</span>
+                                    <span v-if="m.tags && m.tags.length"
+                                        style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                        {{ m.tags.join(' ') }}
+                                    </span>
+                                </el-option>
+                            </el-select></el-col>
                         <el-col :span="12"><el-select v-model="forms.project.default_typesetter_qq" placeholder="默认嵌字"
-                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
-                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                                clearable filterable
+                                :filter-method="(q) => onProjectDefaultMemberFilter(q, 'default_typesetter_qq')"
+                                @visible-change="(v) => !v && onProjectDefaultMemberFilter('', 'default_typesetter_qq')"
+                                style="width: 100%">
+                                <el-option v-for="m in getFilteredProjectDefaultMembers('default_typesetter_qq')" :key="m.qq_id"
+                                    :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id">
+                                    <span style="float: left">{{ m.name }}</span>
+                                    <span v-if="m.tags && m.tags.length"
+                                        style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                        {{ m.tags.join(' ') }}
+                                    </span>
+                                </el-option>
+                            </el-select></el-col>
                         <el-col :span="12"><el-select v-model="forms.project.default_supervisor_qq" placeholder="默认监修"
-                                clearable filterable><el-option v-for="m in computedProjectMembersForEdit"
-                                    :key="m.qq_id" :label="m.name" :value="m.qq_id"></el-option></el-select></el-col>
+                                clearable filterable
+                                :filter-method="(q) => onProjectDefaultMemberFilter(q, 'default_supervisor_qq')"
+                                @visible-change="(v) => !v && onProjectDefaultMemberFilter('', 'default_supervisor_qq')"
+                                style="width: 100%">
+                                <el-option v-for="m in getFilteredProjectDefaultMembers('default_supervisor_qq')" :key="m.qq_id"
+                                    :label="m.name + ' (' + m.qq_id + ')'" :value="m.qq_id">
+                                    <span style="float: left">{{ m.name }}</span>
+                                    <span v-if="m.tags && m.tags.length"
+                                        style="float: right; color: #8492a6; font-size: 12px; margin-left: 10px; opacity: 0.8">
+                                        {{ m.tags.join(' ') }}
+                                    </span>
+                                </el-option>
+                            </el-select></el-col>
                     </el-row>
                 </el-form>
                 <template #footer><el-button type="primary" size="large" @click="submitProject"
@@ -1115,6 +1159,19 @@
                     );
                 };
 
+                const projectDefaultSearchMap = reactive({});
+                const onProjectDefaultMemberFilter = (query, field) => { projectDefaultSearchMap[field] = query; };
+                const getFilteredProjectDefaultMembers = (field) => {
+                    const k = (projectDefaultSearchMap[field] || '').toLowerCase();
+                    const source = computedProjectMembersForEdit.value;
+                    if (!k) return source;
+                    return source.filter(m =>
+                        m.name.toLowerCase().includes(k) ||
+                        m.qq_id.includes(k) ||
+                        (m.tags && m.tags.some(t => t.toLowerCase().includes(k)))
+                    );
+                };
+
                 const filteredProjects = computed(() => {
                     return projects.value.filter(p => {
                         const k = filters.keyword.toLowerCase();
@@ -1315,6 +1372,7 @@
                     handleSettingChange, handleRemindNow,
                     computedProjectMembersForEdit, currentProjectMembers, currentEditingProjectStandalone,
                     episodeSearchMap, onEpisodeMemberFilter, getFilteredEpisodeMembers,
+                    projectDefaultSearchMap, onProjectDefaultMemberFilter, getFilteredProjectDefaultMembers,
                     filteredProjects, filteredMembers, allProjectTags, allMemberTags, memberOptions, filterMemberMethod,
                     memberSearch, filterGroup, getGroupName, fmtDate, isOver,
                     getFilteredEpisodes, getProjectProgress, getProjectProgressColor,
